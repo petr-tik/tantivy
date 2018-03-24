@@ -90,7 +90,9 @@ mod test {
         test_parse_query_to_ast_helper("(+abc:toto -titi)", "(+(abc:\"toto\") -(\"titi\"))");
         test_parse_query_to_ast_helper("-abc:toto", "-(abc:\"toto\")");
         test_parse_query_to_ast_helper("abc:a b", "(abc:\"a\" \"b\")");
+        test_parse_query_to_ast_helper("abc:a AND b", "(abc:\"a\" \"AND\" \"b\")");
         test_parse_query_to_ast_helper("abc:\"a b\"", "abc:\"a b\"");
         test_is_parse_err("abc +    ");
+        test_is_parse_err("abc OR ");
     }
 }
