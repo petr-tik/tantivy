@@ -666,8 +666,8 @@ mod tests {
     fn test_lockfile_already_exists_error_msg() {
         let schema_builder = schema::SchemaBuilder::default();
         let index = Index::create_in_ram(schema_builder.build());
-        let _index_writer = index.writer(40_000_000).unwrap();
-        match index.writer(40_000_000) {
+        let _index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
+        match index.writer_with_num_threads(1, 3_000_000) {
             Err(err) => {
                 let err_msg = err.to_string();
                 assert!(err_msg.contains("Lockfile"));
