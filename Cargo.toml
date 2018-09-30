@@ -40,6 +40,7 @@ downcast = { version="0.9", features = ["nightly"]}
 matches = "0.1"
 snap = "0.2"
 bitpacking = "*"
+wasm-bindgen = "*"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.2"
@@ -74,3 +75,7 @@ required-features = ["mmap"]
 name = "convert_to_static"
 path = "./bin/convert_to_static.rs"
 
+
+[[bin]]
+name = "wasm"
+path = "./bin/wasm.rs"
