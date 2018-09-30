@@ -21,7 +21,7 @@ use std::ffi::OsString;
 
 #[derive(Clone)]
 pub struct StaticDirectory {
-    files: HashMap<PathBuf, &'static [u8]>,
+    pub files: HashMap<PathBuf, &'static [u8]>,
 }
 
 impl Debug for StaticDirectory {
