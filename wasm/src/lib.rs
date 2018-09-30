@@ -5,8 +5,8 @@ extern crate tantivy;
 use tantivy::collector::TopCollector;
 use tantivy::directory::static_directory::StaticDirectory;
 use tantivy::query::QueryParser;
-use tantivy::Index;
 use tantivy::Error;
+use tantivy::Index;
 
 use wasm_bindgen::prelude::*;
 
@@ -16,7 +16,6 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
     index.load_searchers()?;
     Ok(index)
 }
-
 
 #[wasm_bindgen]
 pub fn query(query: &str) -> Vec<String> {
