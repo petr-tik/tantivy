@@ -61,14 +61,14 @@ impl StaticDirectory {
 impl Directory for StaticDirectory {
     fn open_read(&self, path: &Path) -> Result<ReadOnlySource, OpenReadError> {
         if let Some(static_data) = self.files.get(path) {
-            Ok(ReadOnlySource::from(*static_data))
+            Ok(ReadOnlySource::from(static_data.to_vec()))
         } else {
             Err(OpenReadError::FileDoesNotExist(path.to_owned()))
         }
     }
 
     fn delete(&self, path: &Path) -> Result<(), DeleteError> {
-        unimplemented!("Static directory is read-only !")
+        unimplemented!("Static directory is read-only!")
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -76,7 +76,7 @@ impl Directory for StaticDirectory {
     }
 
     fn open_write(&mut self, path: &Path) -> Result<BufWriter<Box<SeekableWrite>>, OpenWriteError> {
-        unimplemented!("Static directory is read-only !")
+        unimplemented!("Static directory is read-only!")
     }
 
     fn atomic_read(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
@@ -88,7 +88,7 @@ impl Directory for StaticDirectory {
     }
 
     fn atomic_write(&mut self, path: &Path, data: &[u8]) -> io::Result<()> {
-        unimplemented!("Static directory is read-only !")
+        unimplemented!("Static directory is read-only!")
     }
 
 }
