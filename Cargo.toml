@@ -74,6 +74,3 @@ required-features = ["mmap"]
 name = "convert_to_static"
 path = "./bin/convert_to_static.rs"
 
-[[bin]]
-name = "test_static_dir"
-path = "./bin/test_static_dir.rs"
