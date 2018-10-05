@@ -19,7 +19,6 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
 
 #[wasm_bindgen]
 pub fn query(query: &str) -> Vec<String> {
-    // Prints each argument on a separate line
     let data: &'static [u8] = &[10, 12, 15];
     let index = instantiate_index(data).unwrap();
     let searcher = index.searcher();
