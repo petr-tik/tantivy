@@ -77,4 +77,6 @@ no_fail = ["fail/no_fail"]
 [badges]
 travis-ci = { repository = "tantivy-search/tantivy" }
 
-
+[[bin]]
+name = "make_blob"
+path = "bin/make_blob.rs"
