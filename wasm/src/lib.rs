@@ -3,24 +3,25 @@ extern crate wasm_bindgen;
 extern crate tantivy;
 
 use tantivy::collector::TopCollector;
-use tantivy::directory::static_directory::StaticDirectory;
+use tantivy::directory::static_directory::{StaticDirectory};
 use tantivy::query::QueryParser;
-use tantivy::Error;
 use tantivy::Index;
 
 use wasm_bindgen::prelude::*;
 
-fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
-    let directory = StaticDirectory::open(data)?;
-    let index = Index::open(directory)?;
-    index.load_searchers()?;
-    Ok(index)
-}
+// #[wasm_bindgen]
+// pub fn instantiate_index(data: &[u8]) -> Index {
+//     index
+// }
+
 
 #[wasm_bindgen]
-pub fn query(query: &str) -> String {
-    let data: &'static [u8] = &[10, 12, 15];
-    let index = instantiate_index(data).unwrap();
+pub fn query(data: &[u8], query: &str) -> String {
+    let directory = StaticDirectory::open(data).unwrap();
+    let index = Index::open(directory).unwrap();
+    index.load_searchers().unwrap();
+
+
     let searcher = index.searcher();
 
     let schema = index.schema();

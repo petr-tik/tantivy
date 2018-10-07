@@ -6,6 +6,7 @@ authors = ["Paul Masurel <paul.masurel@gmail.com>", "Petr Tikilyaynen <tikilyayn
 [dependencies]
 tantivy = { path="../", default-features = false }
 wasm-bindgen = "0.2"
+tempdir = "*"
 
 [lib]
 crate-type = ["cdylib"]

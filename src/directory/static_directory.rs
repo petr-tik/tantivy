@@ -21,7 +21,7 @@ use std::ffi::OsString;
 
 #[derive(Clone)]
 pub struct StaticDirectory {
-    pub files: HashMap<PathBuf, &'static [u8]>,
+    pub files: HashMap<PathBuf, Vec<u8>>,
 }
 
 impl Debug for StaticDirectory {
@@ -32,7 +32,7 @@ impl Debug for StaticDirectory {
 }
 
 impl StaticDirectory {
-    pub fn open(mut data: &'static [u8]) -> TantivyResult<StaticDirectory> {
+    pub fn open(data: &[u8]) -> TantivyResult<StaticDirectory> {
         assert!(data.len() > 8);
         let footer_len_offset = data.len() - 8;
         let body_len = Endianness::read_u64(&data[footer_len_offset..]) as usize;
@@ -50,7 +50,7 @@ impl StaticDirectory {
             let filename_str = str::from_utf8(filename).expect("Invalid UTF8");
             let filename = PathBuf::from(filename_str);
             println!("{:?} {:?}", filename, data_len);
-            files.insert(filename, file_data);
+            files.insert(filename, Vec::from(file_data));
         }
         Ok(StaticDirectory {
             files
