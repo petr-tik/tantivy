@@ -18,11 +18,10 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
 }
 
 #[wasm_bindgen]
-pub fn query(query: &str) -> String {
-    let data: &'static [u8] = &[10, 12, 15];
+pub fn query(query: &str) -> String { 
+    let data: &'static [u8] = &[15u8, 18u8, 20u8, 25u8];
     let index = instantiate_index(data).unwrap();
     let searcher = index.searcher();
-
     let schema = index.schema();
     let command = schema.get_field("command").unwrap();
     let text = schema.get_field("text").unwrap();
@@ -36,14 +35,6 @@ pub fn query(query: &str) -> String {
 
     let doc_addresses = top_collector.docs();
 
-    // The actual documents still need to be
-
-    // retrieved from Tantivy's store.
-
-    //
-    // Since the body field was not configured as stored,
-    // the document returned will only contain
-    // a title.
     let mut docs = Vec::new();
 
     for doc_address in doc_addresses {
