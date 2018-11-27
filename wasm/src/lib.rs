@@ -5,11 +5,17 @@ extern crate tantivy;
 use tantivy::collector::TopCollector;
 use tantivy::directory::static_directory::StaticDirectory;
 use tantivy::query::QueryParser;
-use tantivy::Error;
 use tantivy::Index;
 
 use wasm_bindgen::prelude::*;
 
+
+/// Given an byte-array build and return a tantivy index
+///
+/// Byte-array will be received by the browser from the server,
+/// where it had been built by tantivy-cli
+/// Creates an index and loads searchers,
+/// the `query` function can call for a searcher
 fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
     let directory = StaticDirectory::open(data)?;
     let index = Index::open(directory)?;
@@ -18,7 +24,7 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
 }
 
 #[wasm_bindgen]
-pub fn query(query: &str) -> String { 
+pub fn query(query: &str) -> String {
     let data: &'static [u8] = &[15u8, 18u8, 20u8, 25u8];
     let index = instantiate_index(data).unwrap();
     let searcher = index.searcher();
