@@ -54,7 +54,8 @@ pub mod tests {
     use indexer::operation::AddOperation;
     use indexer::SegmentWriter;
     use query::Scorer;
-    use rand::{Rng, SeedableRng, XorShiftRng};
+    use rand::{Rng, SeedableRng};
+    use rand::rngs::StdRng;
     use schema::Field;
     use schema::IndexRecordOption;
     use schema::{Document, SchemaBuilder, Term, INT_INDEXED, STRING, TEXT};
@@ -502,8 +503,7 @@ pub mod tests {
             let text_field = schema_builder.add_text_field("text", STRING);
             let schema = schema_builder.build();
 
-            let seed: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-            let mut rng: XorShiftRng = XorShiftRng::from_seed(seed);
+            let mut rng: StdRng = StdRng::from_seed([1u8; 32]);
 
             let index = Index::create_in_ram(schema);
             let posting_list_size = 1_000_000;
@@ -654,7 +654,7 @@ mod bench {
         });
     }
 
-    fn bench_skip_next(p: f32, b: &mut Bencher) {
+    fn bench_skip_next(p: f64, b: &mut Bencher) {
         let searcher = INDEX.searcher();
         let segment_reader = searcher.segment_reader(0);
         let docs = tests::sample(segment_reader.num_docs(), p);
