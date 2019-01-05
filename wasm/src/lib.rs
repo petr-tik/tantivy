@@ -9,6 +9,7 @@ use tantivy::Index;
 
 use wasm_bindgen::prelude::*;
 
+static DATA: &'static [u8] = include_bytes!("../index.bin");
 
 /// Given an byte-array build and return a tantivy index
 ///
@@ -25,8 +26,7 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
 
 #[wasm_bindgen]
 pub fn query(query: &str) -> String {
-    let data: &'static [u8] = &[15u8, 18u8, 20u8, 25u8];
-    let index = instantiate_index(data).unwrap();
+    let index = instantiate_index(DATA).unwrap();
     let searcher = index.searcher();
     let schema = index.schema();
     let command = schema.get_field("command").unwrap();
