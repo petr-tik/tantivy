@@ -62,7 +62,8 @@ impl SegmentWriter {
                             segment.index().tokenizers().get(tokenizer_name)
                         }),
                     _ => None,
-                }).collect();
+                })
+                .collect();
         Ok(SegmentWriter {
             max_doc: 0,
             multifield_postings,
@@ -110,18 +111,18 @@ impl SegmentWriter {
             }
             match *field_options.field_type() {
                 FieldType::HierarchicalFacet => {
-                    let facets: Vec<&[u8]> = field_values
+                    let facets: Vec<&str> = field_values
                         .iter()
                         .flat_map(|field_value| match *field_value.value() {
-                            Value::Facet(ref facet) => Some(facet.encoded_bytes()),
+                            Value::Facet(ref facet) => Some(facet.encoded_str()),
                             _ => {
                                 panic!("Expected hierarchical facet");
                             }
-                        }).collect();
+                        })
+                        .collect();
                     let mut term = Term::for_field(field); // we set the Term
-                    for facet_bytes in facets {
+                    for fake_str in facets {
                         let mut unordered_term_id_opt = None;
-                        let fake_str = unsafe { str::from_utf8_unchecked(facet_bytes) };
                         FacetTokenizer.token_stream(fake_str).process(&mut |token| {
                             term.set_text(&token.text);
                             let unordered_term_id =
@@ -145,7 +146,8 @@ impl SegmentWriter {
                             .flat_map(|field_value| match *field_value.value() {
                                 Value::Str(ref text) => Some(text.as_str()),
                                 _ => None,
-                            }).collect();
+                            })
+                            .collect();
                         if texts.is_empty() {
                             0
                         } else {

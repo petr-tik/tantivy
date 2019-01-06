@@ -1,20 +1,17 @@
 use collector::Collector;
+use collector::SegmentCollector;
 use docset::SkipResult;
 use fastfield::FacetReader;
 use schema::Facet;
 use schema::Field;
-use std::cell::UnsafeCell;
+use std::cmp::Ordering;
 use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::BinaryHeap;
 use std::collections::Bound;
 use std::iter::Peekable;
-use std::mem;
 use std::{u64, usize};
-use termdict::TermMerger;
-
-use std::cmp::Ordering;
 use DocId;
 use Result;
 use Score;
@@ -44,12 +41,6 @@ impl<'a> Ord for Hit<'a> {
     fn cmp(&self, other: &Self) -> Ordering {
         other.count.cmp(&self.count)
     }
-}
-
-struct SegmentFacetCounter {
-    pub facet_reader: FacetReader,
-    pub facet_ords: Vec<u64>,
-    pub facet_counts: Vec<u64>,
 }
 
 fn facet_depth(facet_bytes: &[u8]) -> usize {
@@ -91,14 +82,14 @@ fn facet_depth(facet_bytes: &[u8]) -> usize {
 /// ```rust
 /// #[macro_use]
 /// extern crate tantivy;
-/// use tantivy::schema::{Facet, SchemaBuilder, TEXT};
+/// use tantivy::schema::{Facet, Schema, TEXT};
 /// use tantivy::{Index, Result};
 /// use tantivy::collector::FacetCollector;
 /// use tantivy::query::AllQuery;
 ///
 /// # fn main() { example().unwrap(); }
 /// fn example() -> Result<()> {
-///     let mut schema_builder = SchemaBuilder::new();
+///     let mut schema_builder = Schema::builder();
 ///
 ///     // Facet have their own specific type.
 ///     // It is not a bad practise to put all of your
@@ -141,13 +132,10 @@ fn facet_depth(facet_bytes: &[u8]) -> usize {
 ///			let mut facet_collector = FacetCollector::for_field(facet);
 ///         facet_collector.add_facet("/lang");
 ///         facet_collector.add_facet("/category");
-///         searcher.search(&AllQuery, &mut facet_collector).unwrap();
-///
-///         // this object contains count aggregate for all of the facets.
-///         let counts = facet_collector.harvest();
+///         let facet_counts = searcher.search(&AllQuery, &facet_collector).unwrap();
 ///
 ///         // This lists all of the facet counts
-///         let facets: Vec<(&Facet, u64)> = counts
+///         let facets: Vec<(&Facet, u64)> = facet_counts
 ///             .get("/category")
 ///             .collect();
 ///         assert_eq!(facets, vec![
@@ -159,13 +147,10 @@ fn facet_depth(facet_bytes: &[u8]) -> usize {
 ///     {
 ///			let mut facet_collector = FacetCollector::for_field(facet);
 ///         facet_collector.add_facet("/category/fiction");
-///         searcher.search(&AllQuery, &mut facet_collector).unwrap();
-///
-///         // this object contains count aggregate for all of the facets.
-///         let counts = facet_collector.harvest();
+///         let facet_counts = searcher.search(&AllQuery, &facet_collector).unwrap();
 ///
 ///         // This lists all of the facet counts
-///         let facets: Vec<(&Facet, u64)> = counts
+///         let facets: Vec<(&Facet, u64)> = facet_counts
 ///             .get("/category/fiction")
 ///             .collect();
 ///         assert_eq!(facets, vec![
@@ -178,13 +163,10 @@ fn facet_depth(facet_bytes: &[u8]) -> usize {
 ///    {
 ///			let mut facet_collector = FacetCollector::for_field(facet);
 ///         facet_collector.add_facet("/category/fiction");
-///         searcher.search(&AllQuery, &mut facet_collector).unwrap();
-///
-///         // this object contains count aggregate for all of the facets.
-///         let counts = facet_collector.harvest();
+///         let facet_counts = searcher.search(&AllQuery, &facet_collector).unwrap();
 ///
 ///         // This lists all of the facet counts
-///         let facets: Vec<(&Facet, u64)> = counts.top_k("/category/fiction", 1);
+///         let facets: Vec<(&Facet, u64)> = facet_counts.top_k("/category/fiction", 1);
 ///         assert_eq!(facets, vec![
 ///             (&Facet::from("/category/fiction/fantasy"), 2)
 ///         ]);
@@ -194,19 +176,19 @@ fn facet_depth(facet_bytes: &[u8]) -> usize {
 /// }
 /// ```
 pub struct FacetCollector {
-    facet_ords: Vec<u64>,
     field: Field,
-    ff_reader: Option<UnsafeCell<FacetReader>>,
-    segment_counters: Vec<SegmentFacetCounter>,
-
-    // facet_ord -> collapse facet_id
-    current_segment_collapse_mapping: Vec<usize>,
-    // collapse facet_id -> count
-    current_segment_counts: Vec<u64>,
-    // collapse facet_id -> facet_ord
-    current_collapse_facet_ords: Vec<u64>,
-
     facets: BTreeSet<Facet>,
+}
+
+pub struct FacetSegmentCollector {
+    reader: FacetReader,
+    facet_ords_buf: Vec<u64>,
+    // facet_ord -> collapse facet_id
+    collapse_mapping: Vec<usize>,
+    // collapse facet_id -> count
+    counts: Vec<u64>,
+    // collapse facet_id -> facet_ord
+    collapse_facet_ords: Vec<u64>,
 }
 
 fn skip<'a, I: Iterator<Item = &'a Facet>>(
@@ -215,7 +197,7 @@ fn skip<'a, I: Iterator<Item = &'a Facet>>(
 ) -> SkipResult {
     loop {
         match collapse_it.peek() {
-            Some(facet_bytes) => match facet_bytes.encoded_bytes().cmp(target) {
+            Some(facet_bytes) => match facet_bytes.encoded_str().as_bytes().cmp(target) {
                 Ordering::Less => {}
                 Ordering::Greater => {
                     return SkipResult::OverStep;
@@ -240,15 +222,8 @@ impl FacetCollector {
     /// is of the proper type.
     pub fn for_field(field: Field) -> FacetCollector {
         FacetCollector {
-            facet_ords: Vec::with_capacity(255),
-            segment_counters: Vec::new(),
             field,
-            ff_reader: None,
-            facets: BTreeSet::new(),
-
-            current_segment_collapse_mapping: Vec::new(),
-            current_collapse_facet_ords: Vec::new(),
-            current_segment_counts: Vec::new(),
+            facets: BTreeSet::default(),
         }
     }
 
@@ -278,143 +253,100 @@ impl FacetCollector {
         }
         self.facets.insert(facet);
     }
-
-    fn set_collapse_mapping(&mut self, facet_reader: &FacetReader) {
-        self.current_segment_collapse_mapping.clear();
-        self.current_collapse_facet_ords.clear();
-        self.current_segment_counts.clear();
-        let mut collapse_facet_it = self.facets.iter().peekable();
-        self.current_collapse_facet_ords.push(0);
-        let mut facet_streamer = facet_reader.facet_dict().range().into_stream();
-        if !facet_streamer.advance() {
-            return;
-        }
-        'outer: loop {
-            // at the begining of this loop, facet_streamer
-            // is positionned on a term that has not been processed yet.
-            let skip_result = skip(facet_streamer.key(), &mut collapse_facet_it);
-            match skip_result {
-                SkipResult::Reached => {
-                    // we reach a facet we decided to collapse.
-                    let collapse_depth = facet_depth(facet_streamer.key());
-                    let mut collapsed_id = 0;
-                    self.current_segment_collapse_mapping.push(0);
-                    while facet_streamer.advance() {
-                        let depth = facet_depth(facet_streamer.key());
-                        if depth <= collapse_depth {
-                            continue 'outer;
-                        }
-                        if depth == collapse_depth + 1 {
-                            collapsed_id = self.current_collapse_facet_ords.len();
-                            self.current_collapse_facet_ords
-                                .push(facet_streamer.term_ord());
-                            self.current_segment_collapse_mapping.push(collapsed_id);
-                        } else {
-                            self.current_segment_collapse_mapping.push(collapsed_id);
-                        }
-                    }
-                    break;
-                }
-                SkipResult::End | SkipResult::OverStep => {
-                    self.current_segment_collapse_mapping.push(0);
-                    if !facet_streamer.advance() {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    fn finalize_segment(&mut self) {
-        if self.ff_reader.is_some() {
-            self.segment_counters.push(SegmentFacetCounter {
-                facet_reader: self.ff_reader.take().unwrap().into_inner(),
-                facet_ords: mem::replace(&mut self.current_collapse_facet_ords, Vec::new()),
-                facet_counts: mem::replace(&mut self.current_segment_counts, Vec::new()),
-            });
-        }
-    }
-
-    /// Returns the results of the collection.
-    ///
-    /// This method does not just return the counters,
-    /// it also translates the facet ordinals of the last segment.
-    pub fn harvest(mut self) -> FacetCounts {
-        self.finalize_segment();
-
-        let collapsed_facet_ords: Vec<&[u64]> = self
-            .segment_counters
-            .iter()
-            .map(|segment_counter| &segment_counter.facet_ords[..])
-            .collect();
-        let collapsed_facet_counts: Vec<&[u64]> = self
-            .segment_counters
-            .iter()
-            .map(|segment_counter| &segment_counter.facet_counts[..])
-            .collect();
-
-        let facet_streams = self
-            .segment_counters
-            .iter()
-            .map(|seg_counts| seg_counts.facet_reader.facet_dict().range().into_stream())
-            .collect::<Vec<_>>();
-
-        let mut facet_merger = TermMerger::new(facet_streams);
-        let mut facet_counts = BTreeMap::new();
-
-        while facet_merger.advance() {
-            let count = facet_merger
-                .current_kvs()
-                .iter()
-                .map(|it| {
-                    let seg_ord = it.segment_ord;
-                    let term_ord = it.streamer.term_ord();
-                    collapsed_facet_ords[seg_ord]
-                        .binary_search(&term_ord)
-                        .map(|collapsed_term_id| {
-                            if collapsed_term_id == 0 {
-                                0
-                            } else {
-                                collapsed_facet_counts[seg_ord][collapsed_term_id]
-                            }
-                        }).unwrap_or(0)
-                }).sum();
-            if count > 0u64 {
-                let bytes: Vec<u8> = facet_merger.key().to_owned();
-                // may create an corrupted facet if the term dicitonary is corrupted
-                let facet = unsafe { Facet::from_encoded(bytes) };
-                facet_counts.insert(facet, count);
-            }
-        }
-        FacetCounts { facet_counts }
-    }
 }
 
 impl Collector for FacetCollector {
-    fn set_segment(&mut self, _: SegmentLocalId, reader: &SegmentReader) -> Result<()> {
-        self.finalize_segment();
+    type Fruit = FacetCounts;
+
+    type Child = FacetSegmentCollector;
+
+    fn for_segment(
+        &self,
+        _: SegmentLocalId,
+        reader: &SegmentReader,
+    ) -> Result<FacetSegmentCollector> {
         let facet_reader = reader.facet_reader(self.field)?;
-        self.set_collapse_mapping(&facet_reader);
-        self.current_segment_counts
-            .resize(self.current_collapse_facet_ords.len(), 0);
-        self.ff_reader = Some(UnsafeCell::new(facet_reader));
-        Ok(())
+
+        let mut collapse_mapping = Vec::new();
+        let mut counts = Vec::new();
+        let mut collapse_facet_ords = Vec::new();
+
+        let mut collapse_facet_it = self.facets.iter().peekable();
+        collapse_facet_ords.push(0);
+        {
+            let mut facet_streamer = facet_reader.facet_dict().range().into_stream();
+            if facet_streamer.advance() {
+                'outer: loop {
+                    // at the begining of this loop, facet_streamer
+                    // is positionned on a term that has not been processed yet.
+                    let skip_result = skip(facet_streamer.key(), &mut collapse_facet_it);
+                    match skip_result {
+                        SkipResult::Reached => {
+                            // we reach a facet we decided to collapse.
+                            let collapse_depth = facet_depth(facet_streamer.key());
+                            let mut collapsed_id = 0;
+                            collapse_mapping.push(0);
+                            while facet_streamer.advance() {
+                                let depth = facet_depth(facet_streamer.key());
+                                if depth <= collapse_depth {
+                                    continue 'outer;
+                                }
+                                if depth == collapse_depth + 1 {
+                                    collapsed_id = collapse_facet_ords.len();
+                                    collapse_facet_ords.push(facet_streamer.term_ord());
+                                    collapse_mapping.push(collapsed_id);
+                                } else {
+                                    collapse_mapping.push(collapsed_id);
+                                }
+                            }
+                            break;
+                        }
+                        SkipResult::End | SkipResult::OverStep => {
+                            collapse_mapping.push(0);
+                            if !facet_streamer.advance() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        counts.resize(collapse_facet_ords.len(), 0);
+
+        Ok(FacetSegmentCollector {
+            reader: facet_reader,
+            facet_ords_buf: Vec::with_capacity(255),
+            collapse_mapping,
+            counts,
+            collapse_facet_ords,
+        })
     }
 
+    fn requires_scoring(&self) -> bool {
+        false
+    }
+
+    fn merge_fruits(&self, segments_facet_counts: Vec<FacetCounts>) -> Result<FacetCounts> {
+        let mut facet_counts: BTreeMap<Facet, u64> = BTreeMap::new();
+        for segment_facet_counts in segments_facet_counts {
+            for (facet, count) in segment_facet_counts.facet_counts {
+                *(facet_counts.entry(facet).or_insert(0)) += count;
+            }
+        }
+        Ok(FacetCounts { facet_counts })
+    }
+}
+
+impl SegmentCollector for FacetSegmentCollector {
+    type Fruit = FacetCounts;
+
     fn collect(&mut self, doc: DocId, _: Score) {
-        let facet_reader: &mut FacetReader = unsafe {
-            &mut *self
-                .ff_reader
-                .as_ref()
-                .expect("collect() was called before set_segment. This should never happen.")
-                .get()
-        };
-        facet_reader.facet_ords(doc, &mut self.facet_ords);
+        self.reader.facet_ords(doc, &mut self.facet_ords_buf);
         let mut previous_collapsed_ord: usize = usize::MAX;
-        for &facet_ord in &self.facet_ords {
-            let collapsed_ord = self.current_segment_collapse_mapping[facet_ord as usize];
-            self.current_segment_counts[collapsed_ord] += if collapsed_ord == previous_collapsed_ord
-            {
+        for &facet_ord in &self.facet_ords_buf {
+            let collapsed_ord = self.collapse_mapping[facet_ord as usize];
+            self.counts[collapsed_ord] += if collapsed_ord == previous_collapsed_ord {
                 0
             } else {
                 1
@@ -423,8 +355,24 @@ impl Collector for FacetCollector {
         }
     }
 
-    fn requires_scoring(&self) -> bool {
-        false
+    /// Returns the results of the collection.
+    ///
+    /// This method does not just return the counters,
+    /// it also translates the facet ordinals of the last segment.
+    fn harvest(self) -> FacetCounts {
+        let mut facet_counts = BTreeMap::new();
+        let facet_dict = self.reader.facet_dict();
+        for (collapsed_facet_ord, count) in self.counts.iter().cloned().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let mut facet = vec![];
+            let facet_ord = self.collapse_facet_ords[collapsed_facet_ord];
+            facet_dict.ord_to_term(facet_ord as u64, &mut facet);
+            // TODO
+            facet_counts.insert(Facet::from_encoded(facet).unwrap(), count);
+        }
+        FacetCounts { facet_counts }
     }
 }
 
@@ -456,9 +404,9 @@ impl FacetCounts {
         let right_bound = if facet.is_root() {
             Bound::Unbounded
         } else {
-            let mut facet_after_bytes: Vec<u8> = facet.encoded_bytes().to_owned();
-            facet_after_bytes.push(1u8);
-            let facet_after = unsafe { Facet::from_encoded(facet_after_bytes) }; // ok logic
+            let mut facet_after_bytes: String = facet.encoded_str().to_owned();
+            facet_after_bytes.push('\u{1}');
+            let facet_after = Facet::from_encoded_string(facet_after_bytes);
             Bound::Excluded(facet_after)
         };
         let underlying: btree_map::Range<_, _> = self.facet_counts.range((left_bound, right_bound));
@@ -505,15 +453,14 @@ mod tests {
     use core::Index;
     use query::AllQuery;
     use rand::distributions::Uniform;
-    use rand::{thread_rng, Rng};
-    use schema::Field;
     use rand::prelude::SliceRandom;
-    use schema::{Document, Facet, SchemaBuilder};
+    use rand::{thread_rng, Rng};
+    use schema::{Document, Facet, Field, Schema};
     use std::iter;
 
     #[test]
     fn test_facet_collector_drilldown() {
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let facet_field = schema_builder.add_facet_field("facet");
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -528,7 +475,8 @@ mod tests {
                 n /= 4;
                 let leaf = n % 5;
                 Facet::from(&format!("/top{}/mid{}/leaf{}", top, mid, leaf))
-            }).collect();
+            })
+            .collect();
         for i in 0..num_facets * 10 {
             let mut doc = Document::new();
             doc.add_facet(facet_field, facets[i % num_facets].clone());
@@ -537,12 +485,10 @@ mod tests {
         index_writer.commit().unwrap();
         index.load_searchers().unwrap();
         let searcher = index.searcher();
-
         let mut facet_collector = FacetCollector::for_field(facet_field);
         facet_collector.add_facet(Facet::from("/top1"));
-        searcher.search(&AllQuery, &mut facet_collector).unwrap();
+        let counts = searcher.search(&AllQuery, &facet_collector).unwrap();
 
-        let counts: FacetCounts = facet_collector.harvest();
         {
             let facets: Vec<(String, u64)> = counts
                 .get("/top1")
@@ -556,18 +502,16 @@ mod tests {
                     ("/top1/mid2", 50),
                     ("/top1/mid3", 50),
                 ]
-                    .iter()
-                    .map(|&(facet_str, count)| (String::from(facet_str), count))
-                    .collect::<Vec<_>>()
+                .iter()
+                .map(|&(facet_str, count)| (String::from(facet_str), count))
+                .collect::<Vec<_>>()
             );
         }
     }
 
     #[test]
-    #[should_panic(
-        expected = "Tried to add a facet which is a descendant of \
-                    an already added facet."
-    )]
+    #[should_panic(expected = "Tried to add a facet which is a descendant of \
+                               an already added facet.")]
     fn test_misused_facet_collector() {
         let mut facet_collector = FacetCollector::for_field(Field(0));
         facet_collector.add_facet(Facet::from("/country"));
@@ -576,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_doc_unsorted_multifacet() {
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let facet_field = schema_builder.add_facet_field("facets");
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -593,8 +537,7 @@ mod tests {
         assert_eq!(searcher.num_docs(), 1);
         let mut facet_collector = FacetCollector::for_field(facet_field);
         facet_collector.add_facet("/subjects");
-        searcher.search(&AllQuery, &mut facet_collector).unwrap();
-        let counts = facet_collector.harvest();
+        let counts = searcher.search(&AllQuery, &facet_collector).unwrap();
         let facets: Vec<(&Facet, u64)> = counts.get("/subjects").collect();
         assert_eq!(facets[0].1, 1);
     }
@@ -608,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_facet_collector_topk() {
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let facet_field = schema_builder.add_facet_field("facet");
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -620,13 +563,15 @@ mod tests {
                 let facet = Facet::from(&format!("/facet/{}", c));
                 let doc = doc!(facet_field => facet);
                 iter::repeat(doc).take(count)
-            }).map(|mut doc| {
+            })
+            .map(|mut doc| {
                 doc.add_facet(
                     facet_field,
                     &format!("/facet/{}", thread_rng().sample(&uniform)),
                 );
                 doc
-            }).collect();
+            })
+            .collect();
         docs[..].shuffle(&mut thread_rng());
 
         let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
@@ -640,9 +585,8 @@ mod tests {
 
         let mut facet_collector = FacetCollector::for_field(facet_field);
         facet_collector.add_facet("/facet");
-        searcher.search(&AllQuery, &mut facet_collector).unwrap();
+        let counts: FacetCounts = searcher.search(&AllQuery, &facet_collector).unwrap();
 
-        let counts: FacetCounts = facet_collector.harvest();
         {
             let facets: Vec<(&Facet, u64)> = counts.top_k("/facet", 3);
             assert_eq!(
@@ -665,13 +609,13 @@ mod bench {
     use query::AllQuery;
     use rand::{thread_rng, Rng};
     use schema::Facet;
-    use schema::SchemaBuilder;
+    use schema::Schema;
     use test::Bencher;
     use Index;
 
     #[bench]
     fn bench_facet_collector(b: &mut Bencher) {
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let facet_field = schema_builder.add_facet_field("facet");
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -695,8 +639,8 @@ mod bench {
 
         b.iter(|| {
             let searcher = index.searcher();
-            let mut facet_collector = FacetCollector::for_field(facet_field);
-            searcher.search(&AllQuery, &mut facet_collector).unwrap();
+            let facet_collector = FacetCollector::for_field(facet_field);
+            searcher.search(&AllQuery, &facet_collector).unwrap();
         });
     }
 }

@@ -1,3 +1,4 @@
+mod executor;
 pub mod index;
 mod index_meta;
 mod inverted_index_reader;
@@ -9,6 +10,7 @@ mod segment_id;
 mod segment_meta;
 mod segment_reader;
 
+pub use self::executor::Executor;
 pub use self::index::Index;
 pub use self::index_meta::IndexMeta;
 pub use self::inverted_index_reader::InvertedIndexReader;

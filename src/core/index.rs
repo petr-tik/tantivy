@@ -3,6 +3,7 @@ use super::pool::Pool;
 use super::segment::create_segment;
 use super::segment::Segment;
 use core::searcher::Searcher;
+use core::Executor;
 use core::IndexMeta;
 use core::SegmentId;
 use core::SegmentMeta;
@@ -12,6 +13,7 @@ use directory::ManagedDirectory;
 #[cfg(feature = "mmap")]
 use directory::MmapDirectory;
 use directory::{Directory, RAMDirectory};
+use error::DataCorruption;
 use error::TantivyError;
 use indexer::index_writer::open_index_writer;
 use indexer::index_writer::HEAP_SIZE_MIN;
@@ -36,7 +38,13 @@ fn load_metas(directory: &Directory) -> Result<IndexMeta> {
     let meta_data = directory.atomic_read(&META_FILEPATH)?;
     let meta_string = String::from_utf8_lossy(&meta_data);
     serde_json::from_str(&meta_string)
-        .map_err(|_| TantivyError::CorruptedFile(META_FILEPATH.clone()))
+        .map_err(|e| {
+            DataCorruption::new(
+                META_FILEPATH.clone(),
+                format!("Meta file cannot be deserialized. {:?}.", e),
+            )
+        })
+        .map_err(From::from)
 }
 
 /// Search Index
@@ -45,6 +53,7 @@ pub struct Index {
     schema: Schema,
     num_searchers: Arc<AtomicUsize>,
     searcher_pool: Arc<Pool<Searcher>>,
+    executor: Arc<Executor>,
     tokenizers: TokenizerManager,
 }
 
@@ -52,6 +61,29 @@ impl Index {
     /// Examines the director to see if it contains an index
     pub fn exists<Dir: Directory>(dir: &Dir) -> bool {
         dir.exists(&META_FILEPATH)
+    }
+
+    /// Accessor to the search executor.
+    ///
+    /// This pool is used by default when calling `searcher.search(...)`
+    /// to perform search on the individual segments.
+    ///
+    /// By default the executor is single thread, and simply runs in the calling thread.
+    pub fn search_executor(&self) -> &Executor {
+        self.executor.as_ref()
+    }
+
+    /// Replace the default single thread search executor pool
+    /// by a thread pool with a given number of threads.
+    pub fn set_multithread_executor(&mut self, num_threads: usize) {
+        self.executor = Arc::new(Executor::multi_thread(num_threads, "thrd-tantivy-search-"));
+    }
+
+    /// Replace the default single thread search executor pool
+    /// by a thread pool with a given number of threads.
+    pub fn set_default_multithread_executor(&mut self) {
+        let default_num_threads = num_cpus::get();
+        self.set_multithread_executor(default_num_threads);
     }
 
     /// Creates a new index using the `RAMDirectory`.
@@ -85,7 +117,9 @@ impl Index {
             if index.schema() == schema {
                 Ok(index)
             } else {
-                Err(TantivyError::SchemaError("An index exists but the schema does not match.".to_string()))
+                Err(TantivyError::SchemaError(
+                    "An index exists but the schema does not match.".to_string(),
+                ))
             }
         } else {
             Index::create(dir, schema)
@@ -108,7 +142,7 @@ impl Index {
 
     /// Creates a new index given an implementation of the trait `Directory`
     pub fn create<Dir: Directory>(dir: Dir, schema: Schema) -> Result<Index> {
-        let directory = ManagedDirectory::new(dir)?;
+        let directory = ManagedDirectory::wrap(dir)?;
         Index::from_directory(directory, schema)
     }
 
@@ -131,6 +165,7 @@ impl Index {
             num_searchers: Arc::new(AtomicUsize::new(n_cpus)),
             searcher_pool: Arc::new(Pool::new()),
             tokenizers: TokenizerManager::default(),
+            executor: Arc::new(Executor::single_thread()),
         };
         index.load_searchers()?;
         Ok(index)
@@ -171,7 +206,7 @@ impl Index {
 
     /// Open the index using the provided directory
     pub fn open<D: Directory>(directory: D) -> Result<Index> {
-        let directory = ManagedDirectory::new(directory)?;
+        let directory = ManagedDirectory::wrap(directory)?;
         let metas = load_metas(&directory)?;
         Index::create_from_metas(directory, &metas)
     }
@@ -348,19 +383,20 @@ impl Clone for Index {
             num_searchers: Arc::clone(&self.num_searchers),
             searcher_pool: Arc::clone(&self.searcher_pool),
             tokenizers: self.tokenizers.clone(),
+            executor: self.executor.clone(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use schema::{Schema, SchemaBuilder, INT_INDEXED, TEXT};
-    use Index;
     use directory::RAMDirectory;
+    use schema::{Schema, INT_INDEXED, TEXT};
+    use Index;
 
     #[test]
     fn test_indexer_for_field() {
-        let mut schema_builder = SchemaBuilder::default();
+        let mut schema_builder = Schema::builder();
         let num_likes_field = schema_builder.add_u64_field("num_likes", INT_INDEXED);
         let body_field = schema_builder.add_text_field("body", TEXT);
         let schema = schema_builder.build();
@@ -388,7 +424,6 @@ mod tests {
         assert!(Index::exists(&directory));
     }
 
-
     #[test]
     fn open_or_create_should_open() {
         let directory = RAMDirectory::create();
@@ -402,7 +437,7 @@ mod tests {
         let directory = RAMDirectory::create();
         assert!(Index::create(directory.clone(), throw_away_schema()).is_ok());
         assert!(Index::exists(&directory));
-        assert!(Index::create(directory.clone(), SchemaBuilder::default().build()).is_ok());
+        assert!(Index::create(directory.clone(), Schema::builder().build()).is_ok());
     }
 
     #[test]
@@ -411,12 +446,15 @@ mod tests {
         assert!(Index::create(directory.clone(), throw_away_schema()).is_ok());
         assert!(Index::exists(&directory));
         assert!(Index::open_or_create(directory.clone(), throw_away_schema()).is_ok());
-        let err = Index::open_or_create(directory, SchemaBuilder::default().build());
-        assert_eq!(format!("{:?}", err.unwrap_err()), "SchemaError(\"An index exists but the schema does not match.\")");
+        let err = Index::open_or_create(directory, Schema::builder().build());
+        assert_eq!(
+            format!("{:?}", err.unwrap_err()),
+            "SchemaError(\"An index exists but the schema does not match.\")"
+        );
     }
 
     fn throw_away_schema() -> Schema {
-        let mut schema_builder = SchemaBuilder::default();
+        let mut schema_builder = Schema::builder();
         let _ = schema_builder.add_u64_field("num_likes", INT_INDEXED);
         schema_builder.build()
     }

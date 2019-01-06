@@ -21,7 +21,7 @@
 
 **Tantivy** is a **full text search engine library** written in rust.
 
-It is closer to [Apache Lucene](https://lucene.apache.org/) than to [Elastic Search](https://www.elastic.co/products/elasticsearch) and [Apache Solr](https://lucene.apache.org/solr/) in the sense it is not
+It is closer to [Apache Lucene](https://lucene.apache.org/) than to [Elasticsearch](https://www.elastic.co/products/elasticsearch) and [Apache Solr](https://lucene.apache.org/solr/) in the sense it is not
 an off-the-shelf search engine server, but rather a crate that can be used
 to build such a search engine.
 
@@ -76,7 +76,7 @@ It will walk you through getting a wikipedia search engine up and running in a f
 Tantivy compiles on stable rust but requires `Rust >= 1.27`.
 To check out and run tests, you can simply run :
 
-    git clone git@github.com:tantivy-search/tantivy.git
+    git clone https://github.com/tantivy-search/tantivy.git
     cd tantivy
     cargo build
 

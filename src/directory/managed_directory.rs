@@ -1,7 +1,7 @@
 use core::MANAGED_FILEPATH;
 use directory::error::{DeleteError, IOError, OpenReadError, OpenWriteError};
 use directory::{ReadOnlySource, WritePtr};
-use error::TantivyError;
+use error::DataCorruption;
 use indexer::LockType;
 use serde_json;
 use std::collections::HashSet;
@@ -59,12 +59,17 @@ fn save_managed_paths(
 
 impl ManagedDirectory {
     /// Wraps a directory as managed directory.
-    pub fn new<Dir: Directory>(directory: Dir) -> Result<ManagedDirectory> {
+    pub fn wrap<Dir: Directory>(directory: Dir) -> Result<ManagedDirectory> {
         match directory.atomic_read(&MANAGED_FILEPATH) {
             Ok(data) => {
                 let managed_files_json = String::from_utf8_lossy(&data);
                 let managed_files: HashSet<PathBuf> = serde_json::from_str(&managed_files_json)
-                    .map_err(|_| TantivyError::CorruptedFile(MANAGED_FILEPATH.clone()))?;
+                    .map_err(|e| {
+                        DataCorruption::new(
+                            MANAGED_FILEPATH.clone(),
+                            format!("Managed file cannot be deserialized: {:?}. ", e),
+                        )
+                    })?;
                 Ok(ManagedDirectory {
                     directory: Box::new(directory),
                     meta_informations: Arc::new(RwLock::new(MetaInformation {
@@ -260,7 +265,7 @@ mod tests {
         let tempdir_path = PathBuf::from(tempdir.path());
         {
             let mmap_directory = MmapDirectory::open(&tempdir_path).unwrap();
-            let mut managed_directory = ManagedDirectory::new(mmap_directory).unwrap();
+            let mut managed_directory = ManagedDirectory::wrap(mmap_directory).unwrap();
             {
                 let mut write_file = managed_directory.open_write(*TEST_PATH1).unwrap();
                 write_file.flush().unwrap();
@@ -286,7 +291,7 @@ mod tests {
         }
         {
             let mmap_directory = MmapDirectory::open(&tempdir_path).unwrap();
-            let mut managed_directory = ManagedDirectory::new(mmap_directory).unwrap();
+            let mut managed_directory = ManagedDirectory::wrap(mmap_directory).unwrap();
             {
                 assert!(managed_directory.exists(*TEST_PATH1));
                 assert!(!managed_directory.exists(*TEST_PATH2));
@@ -310,7 +315,7 @@ mod tests {
         let living_files = HashSet::new();
 
         let mmap_directory = MmapDirectory::open(&tempdir_path).unwrap();
-        let mut managed_directory = ManagedDirectory::new(mmap_directory).unwrap();
+        let mut managed_directory = ManagedDirectory::wrap(mmap_directory).unwrap();
         managed_directory
             .atomic_write(*TEST_PATH1, &vec![0u8, 1u8])
             .unwrap();

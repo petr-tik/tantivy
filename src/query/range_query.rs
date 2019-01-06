@@ -40,14 +40,13 @@ fn map_bound<TFrom, TTo, Transform: Fn(&TFrom) -> TTo>(
 /// # #[macro_use]
 /// # extern crate tantivy;
 /// # use tantivy::Index;
-/// # use tantivy::schema::{SchemaBuilder, INT_INDEXED};
-/// # use tantivy::collector::CountCollector;
-/// # use tantivy::query::Query;
+/// # use tantivy::schema::{Schema, INT_INDEXED};
+/// # use tantivy::collector::Count;
 /// # use tantivy::Result;
 /// # use tantivy::query::RangeQuery;
 /// #
 /// # fn run() -> Result<()> {
-/// #     let mut schema_builder = SchemaBuilder::new();
+/// #     let mut schema_builder = Schema::builder();
 /// #     let year_field = schema_builder.add_u64_field("year", INT_INDEXED);
 /// #     let schema = schema_builder.build();
 /// #
@@ -67,10 +66,7 @@ fn map_bound<TFrom, TTo, Transform: Fn(&TFrom) -> TTo>(
 ///
 /// let docs_in_the_sixties = RangeQuery::new_u64(year_field, 1960..1970);
 ///
-/// let mut count_collector = CountCollector::default();
-/// docs_in_the_sixties.search(&searcher, &mut count_collector)?;
-///
-/// let num_60s_books = count_collector.count();
+/// let num_60s_books = searcher.search(&docs_in_the_sixties, &Count)?;
 ///
 /// #     assert_eq!(num_60s_books, 2285);
 /// #     Ok(())
@@ -296,9 +292,8 @@ impl Weight for RangeWeight {
 mod tests {
 
     use super::RangeQuery;
-    use collector::CountCollector;
-    use query::Query;
-    use schema::{Document, Field, SchemaBuilder, INT_INDEXED};
+    use collector::Count;
+    use schema::{Document, Field, Schema, INT_INDEXED};
     use std::collections::Bound;
     use Index;
     use Result;
@@ -306,7 +301,7 @@ mod tests {
     #[test]
     fn test_range_query_simple() {
         fn run() -> Result<()> {
-            let mut schema_builder = SchemaBuilder::new();
+            let mut schema_builder = Schema::builder();
             let year_field = schema_builder.add_u64_field("year", INT_INDEXED);
             let schema = schema_builder.build();
 
@@ -327,9 +322,8 @@ mod tests {
             let docs_in_the_sixties = RangeQuery::new_u64(year_field, 1960u64..1970u64);
 
             // ... or `1960..=1969` if inclusive range is enabled.
-            let mut count_collector = CountCollector::default();
-            docs_in_the_sixties.search(&searcher, &mut count_collector)?;
-            assert_eq!(count_collector.count(), 2285);
+            let count = searcher.search(&docs_in_the_sixties, &Count)?;
+            assert_eq!(count, 2285);
             Ok(())
         }
 
@@ -340,7 +334,7 @@ mod tests {
     fn test_range_query() {
         let int_field: Field;
         let schema = {
-            let mut schema_builder = SchemaBuilder::new();
+            let mut schema_builder = Schema::builder();
             int_field = schema_builder.add_i64_field("intfield", INT_INDEXED);
             schema_builder.build()
         };
@@ -363,11 +357,8 @@ mod tests {
         }
         index.load_searchers().unwrap();
         let searcher = index.searcher();
-        let count_multiples = |range_query: RangeQuery| {
-            let mut count_collector = CountCollector::default();
-            range_query.search(&searcher, &mut count_collector).unwrap();
-            count_collector.count()
-        };
+        let count_multiples =
+            |range_query: RangeQuery| searcher.search(&range_query, &Count).unwrap();
 
         assert_eq!(count_multiples(RangeQuery::new_i64(int_field, 10..11)), 9);
         assert_eq!(

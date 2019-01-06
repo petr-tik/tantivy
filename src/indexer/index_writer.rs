@@ -61,7 +61,8 @@ fn initial_table_size(per_thread_memory_budget: usize) -> usize {
                 "Per thread memory is too small: {}",
                 per_thread_memory_budget
             )
-        }).min(19) // we cap it at 512K
+        })
+        .min(19) // we cap it at 512K
 }
 
 /// `IndexWriter` is the user entry-point to add document to an index.
@@ -139,7 +140,7 @@ pub fn open_index_writer(
     let stamper = Stamper::new(current_opstamp);
 
     let segment_updater =
-        SegmentUpdater::new(index.clone(), stamper.clone(), &delete_queue.cursor())?;
+        SegmentUpdater::create(index.clone(), stamper.clone(), &delete_queue.cursor())?;
 
     let mut index_writer = IndexWriter {
         _directory_lock: Some(directory_lock),
@@ -388,11 +389,13 @@ impl IndexWriter {
         let mem_budget = self.heap_size_in_bytes_per_thread;
         let join_handle: JoinHandle<Result<()>> = thread::Builder::new()
             .name(format!(
-                "indexing thread {} for gen {}",
+                "thrd-tantivy-index{}-gen{}",
                 self.worker_id, generation
-            )).spawn(move || {
+            ))
+            .spawn(move || {
                 loop {
-                    let mut document_iterator = document_receiver_clone.clone().into_iter().peekable();
+                    let mut document_iterator =
+                        document_receiver_clone.clone().into_iter().peekable();
 
                     // the peeking here is to avoid
                     // creating a new segment's files
@@ -464,10 +467,8 @@ impl IndexWriter {
     ///
     /// Returns the former segment_ready channel.
     fn recreate_document_channel(&mut self) -> DocumentReceiver {
-        let (mut document_sender, mut document_receiver): (
-            DocumentSender,
-            DocumentReceiver,
-        ) = channel::bounded(PIPELINE_MAX_SIZE_IN_DOCS);
+        let (mut document_sender, mut document_receiver): (DocumentSender, DocumentReceiver) =
+            channel::bounded(PIPELINE_MAX_SIZE_IN_DOCS);
         swap(&mut self.document_sender, &mut document_sender);
         swap(&mut self.document_receiver, &mut document_receiver);
         document_receiver
@@ -660,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_lockfile_stops_duplicates() {
-        let schema_builder = schema::SchemaBuilder::default();
+        let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
         let _index_writer = index.writer(40_000_000).unwrap();
         match index.writer(40_000_000) {
@@ -671,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_lockfile_already_exists_error_msg() {
-        let schema_builder = schema::SchemaBuilder::default();
+        let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
         let _index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
         match index.writer_with_num_threads(1, 3_000_000) {
@@ -686,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_set_merge_policy() {
-        let schema_builder = schema::SchemaBuilder::default();
+        let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
         let index_writer = index.writer(40_000_000).unwrap();
         assert_eq!(
@@ -704,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_lockfile_released_on_drop() {
-        let schema_builder = schema::SchemaBuilder::default();
+        let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
         {
             let _index_writer = index.writer(40_000_000).unwrap();
@@ -716,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_commit_and_rollback() {
-        let mut schema_builder = schema::SchemaBuilder::default();
+        let mut schema_builder = schema::Schema::builder();
         let text_field = schema_builder.add_text_field("text", schema::TEXT);
         let index = Index::create_in_ram(schema_builder.build());
 
@@ -750,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_with_merges() {
-        let mut schema_builder = schema::SchemaBuilder::default();
+        let mut schema_builder = schema::Schema::builder();
         let text_field = schema_builder.add_text_field("text", schema::TEXT);
         let index = Index::create_in_ram(schema_builder.build());
         let num_docs_containing = |s: &str| {
@@ -787,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_prepare_with_commit_message() {
-        let mut schema_builder = schema::SchemaBuilder::default();
+        let mut schema_builder = schema::Schema::builder();
         let text_field = schema_builder.add_text_field("text", schema::TEXT);
         let index = Index::create_in_ram(schema_builder.build());
 
@@ -821,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_prepare_but_rollback() {
-        let mut schema_builder = schema::SchemaBuilder::default();
+        let mut schema_builder = schema::Schema::builder();
         let text_field = schema_builder.add_text_field("text", schema::TEXT);
         let index = Index::create_in_ram(schema_builder.build());
 
@@ -869,7 +870,7 @@ mod tests {
     #[test]
     fn test_write_commit_fails() {
         use fail;
-        let mut schema_builder = schema::SchemaBuilder::default();
+        let mut schema_builder = schema::Schema::builder();
         let text_field = schema_builder.add_text_field("text", schema::TEXT);
         let index = Index::create_in_ram(schema_builder.build());
 

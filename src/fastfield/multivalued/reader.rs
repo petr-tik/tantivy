@@ -47,11 +47,11 @@ impl<Item: FastValue> MultiValueIntFastFieldReader<Item> {
 mod tests {
 
     use core::Index;
-    use schema::{Document, Facet, SchemaBuilder};
+    use schema::{Document, Facet, Schema};
 
     #[test]
     fn test_multifastfield_reader() {
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let facet_field = schema_builder.add_facet_field("facets");
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -82,20 +82,20 @@ mod tests {
 
         let mut facet = Facet::root();
         {
-            facet_reader.facet_from_ord(1, &mut facet);
+            facet_reader.facet_from_ord(1, &mut facet).unwrap();
             assert_eq!(facet, Facet::from("/category"));
         }
         {
-            facet_reader.facet_from_ord(2, &mut facet);
+            facet_reader.facet_from_ord(2, &mut facet).unwrap();
             assert_eq!(facet, Facet::from("/category/cat1"));
         }
         {
-            facet_reader.facet_from_ord(3, &mut facet);
+            facet_reader.facet_from_ord(3, &mut facet).unwrap();
             assert_eq!(format!("{}", facet), "/category/cat2");
             assert_eq!(facet, Facet::from("/category/cat2"));
         }
         {
-            facet_reader.facet_from_ord(4, &mut facet);
+            facet_reader.facet_from_ord(4, &mut facet).unwrap();
             assert_eq!(facet, Facet::from("/category/cat3"));
         }
 

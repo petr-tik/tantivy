@@ -22,6 +22,11 @@ impl HighlightSection {
     fn new(start: usize, stop: usize) -> HighlightSection {
         HighlightSection { start, stop }
     }
+
+    /// Returns the bounds of the `HighlightSection`.
+    pub fn bounds(&self) -> (usize, usize) {
+        (self.start, self.stop)
+    }
 }
 
 #[derive(Debug)]
@@ -65,6 +70,8 @@ impl FragmentCandidate {
     }
 }
 
+/// `Snippet`
+/// Contains a fragment of a document, and some highlighed parts inside it.
 #[derive(Debug)]
 pub struct Snippet {
     fragments: String,
@@ -75,6 +82,7 @@ const HIGHLIGHTEN_PREFIX: &str = "<b>";
 const HIGHLIGHTEN_POSTFIX: &str = "</b>";
 
 impl Snippet {
+    /// Create a new, empty, `Snippet`
     pub fn empty() -> Snippet {
         Snippet {
             fragments: String::new(),
@@ -98,6 +106,16 @@ impl Snippet {
             &self.fragments[start_from..self.fragments.len()],
         ));
         html
+    }
+
+    /// Returns a fragment from the `Snippet`.
+    pub fn fragments(&self) -> &str {
+        &self.fragments
+    }
+
+    /// Returns a list of higlighted positions from the `Snippet`.
+    pub fn highlighted(&self) -> &[HighlightSection] {
+        &self.highlighted
     }
 }
 
@@ -174,7 +192,8 @@ fn select_best_fragment_combination(fragments: &[FragmentCandidate], text: &str)
                     item.start - fragment.start_offset,
                     item.stop - fragment.start_offset,
                 )
-            }).collect();
+            })
+            .collect();
         Snippet {
             fragments: fragment_text.to_string(),
             highlighted,
@@ -197,12 +216,12 @@ fn select_best_fragment_combination(fragments: &[FragmentCandidate], text: &str)
 /// # #[macro_use]
 /// # extern crate tantivy;
 /// # use tantivy::Index;
-/// # use tantivy::schema::{SchemaBuilder, TEXT};
+/// # use tantivy::schema::{Schema, TEXT};
 /// # use tantivy::query::QueryParser;
 /// use tantivy::SnippetGenerator;
 ///
 /// # fn main() -> tantivy::Result<()> {
-/// #    let mut schema_builder = SchemaBuilder::default();
+/// #    let mut schema_builder = Schema::builder();
 /// #    let text_field = schema_builder.add_text_field("text", TEXT);
 /// #    let schema = schema_builder.build();
 /// #    let index = Index::create_in_ram(schema);
@@ -224,7 +243,7 @@ fn select_best_fragment_combination(fragments: &[FragmentCandidate], text: &str)
 /// let query = query_parser.parse_query("haleurs flamands").unwrap();
 /// # index.load_searchers()?;
 /// # let searcher = index.searcher();
-/// let mut snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field)?;
+/// let mut snippet_generator = SnippetGenerator::create(&searcher, &*query, text_field)?;
 /// snippet_generator.set_max_num_chars(100);
 /// let snippet = snippet_generator.snippet_from_doc(&doc);
 /// let snippet_html: String = snippet.to_html();
@@ -241,7 +260,7 @@ pub struct SnippetGenerator {
 
 impl SnippetGenerator {
     /// Creates a new snippet generator
-    pub fn new(searcher: &Searcher, query: &Query, field: Field) -> Result<SnippetGenerator> {
+    pub fn create(searcher: &Searcher, query: &Query, field: Field) -> Result<SnippetGenerator> {
         let mut terms = BTreeSet::new();
         query.query_terms(&mut terms);
         let terms_text: BTreeMap<String, f32> = terms
@@ -306,7 +325,7 @@ impl SnippetGenerator {
 mod tests {
     use super::{search_fragments, select_best_fragment_combination};
     use query::QueryParser;
-    use schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, TEXT};
+    use schema::{IndexRecordOption, Schema, TextFieldIndexing, TextOptions, TEXT};
     use std::collections::BTreeMap;
     use std::iter::Iterator;
     use tokenizer::{box_tokenizer, SimpleTokenizer};
@@ -328,8 +347,6 @@ to the project are from community members.[15]
 Rust won first place for "most loved programming language" in the Stack Overflow Developer
 Survey in 2016, 2017, and 2018."#;
 
-
-
     #[test]
     fn test_snippet() {
         let boxed_tokenizer = box_tokenizer(SimpleTokenizer);
@@ -345,12 +362,17 @@ Survey in 2016, 2017, and 2018."#;
             assert_eq!(first.stop_offset, 89);
         }
         let snippet = select_best_fragment_combination(&fragments[..], &TEST_TEXT);
-        assert_eq!(snippet.fragments, "Rust is a systems programming language sponsored by \
-         Mozilla which\ndescribes it as a \"safe");
-        assert_eq!(snippet.to_html(), "<b>Rust</b> is a systems programming <b>language</b> \
-         sponsored by Mozilla which\ndescribes it as a &quot;safe")
+        assert_eq!(
+            snippet.fragments,
+            "Rust is a systems programming language sponsored by \
+             Mozilla which\ndescribes it as a \"safe"
+        );
+        assert_eq!(
+            snippet.to_html(),
+            "<b>Rust</b> is a systems programming <b>language</b> \
+             sponsored by Mozilla which\ndescribes it as a &quot;safe"
+        )
     }
-
 
     #[test]
     fn test_snippet_scored_fragment() {
@@ -385,9 +407,7 @@ Survey in 2016, 2017, and 2018."#;
             let snippet = select_best_fragment_combination(&fragments[..], &TEST_TEXT);
             assert_eq!(snippet.to_html(), "programming <b>language</b>")
         }
-
     }
-
 
     #[test]
     fn test_snippet_in_second_fragment() {
@@ -495,10 +515,9 @@ Survey in 2016, 2017, and 2018."#;
         assert_eq!(snippet.to_html(), "");
     }
 
-
     #[test]
     fn test_snippet_generator_term_score() {
-        let mut schema_builder = SchemaBuilder::default();
+        let mut schema_builder = Schema::builder();
         let text_field = schema_builder.add_text_field("text", TEXT);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -515,29 +534,42 @@ Survey in 2016, 2017, and 2018."#;
         let query_parser = QueryParser::for_index(&index, vec![text_field]);
         {
             let query = query_parser.parse_query("e").unwrap();
-            let snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field).unwrap();
+            let snippet_generator =
+                SnippetGenerator::create(&searcher, &*query, text_field).unwrap();
             assert!(snippet_generator.terms_text().is_empty());
         }
         {
             let query = query_parser.parse_query("a").unwrap();
-            let snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field).unwrap();
-            assert_eq!(&btreemap!("a".to_string() => 0.25f32), snippet_generator.terms_text());
+            let snippet_generator =
+                SnippetGenerator::create(&searcher, &*query, text_field).unwrap();
+            assert_eq!(
+                &btreemap!("a".to_string() => 0.25f32),
+                snippet_generator.terms_text()
+            );
         }
         {
             let query = query_parser.parse_query("a b").unwrap();
-            let snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field).unwrap();
-            assert_eq!(&btreemap!("a".to_string() => 0.25f32, "b".to_string() => 0.5), snippet_generator.terms_text());
+            let snippet_generator =
+                SnippetGenerator::create(&searcher, &*query, text_field).unwrap();
+            assert_eq!(
+                &btreemap!("a".to_string() => 0.25f32, "b".to_string() => 0.5),
+                snippet_generator.terms_text()
+            );
         }
         {
             let query = query_parser.parse_query("a b c").unwrap();
-            let snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field).unwrap();
-            assert_eq!(&btreemap!("a".to_string() => 0.25f32, "b".to_string() => 0.5), snippet_generator.terms_text());
+            let snippet_generator =
+                SnippetGenerator::create(&searcher, &*query, text_field).unwrap();
+            assert_eq!(
+                &btreemap!("a".to_string() => 0.25f32, "b".to_string() => 0.5),
+                snippet_generator.terms_text()
+            );
         }
     }
 
     #[test]
     fn test_snippet_generator() {
-        let mut schema_builder = SchemaBuilder::default();
+        let mut schema_builder = Schema::builder();
         let text_options = TextOptions::default().set_indexing_options(
             TextFieldIndexing::default()
                 .set_tokenizer("en_stem")
@@ -559,7 +591,8 @@ Survey in 2016, 2017, and 2018."#;
         let searcher = index.searcher();
         let query_parser = QueryParser::for_index(&index, vec![text_field]);
         let query = query_parser.parse_query("rust design").unwrap();
-        let mut snippet_generator = SnippetGenerator::new(&searcher, &*query, text_field).unwrap();
+        let mut snippet_generator =
+            SnippetGenerator::create(&searcher, &*query, text_field).unwrap();
         {
             let snippet = snippet_generator.snippet(TEST_TEXT);
             assert_eq!(snippet.to_html(), "imperative-procedural paradigms. <b>Rust</b> is syntactically similar to C++[according to whom?],\nbut its <b>designers</b> intend it to provide better memory safety");

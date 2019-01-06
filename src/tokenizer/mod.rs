@@ -9,7 +9,7 @@
 //! use tantivy::schema::*;
 //!
 //! # fn main() {
-//! let mut schema_builder = SchemaBuilder::new();
+//! let mut schema_builder = Schema::builder();
 //!
 //! let text_options = TextOptions::default()
 //!     .set_indexing_options(
@@ -82,12 +82,12 @@
 //!
 //! ```
 //! # extern crate tantivy;
-//! # use tantivy::schema::SchemaBuilder;
+//! # use tantivy::schema::Schema;
 //! # use tantivy::tokenizer::*;
 //! # use tantivy::Index;
 //! # fn main() {
 //! # let custom_en_tokenizer = SimpleTokenizer;
-//! # let schema = SchemaBuilder::new().build();
+//! # let schema = Schema::builder().build();
 //! let index = Index::create_in_ram(schema);
 //! index.tokenizers()
 //!      .register("custom_en", custom_en_tokenizer);
@@ -101,12 +101,12 @@
 //!
 //! ```
 //! extern crate tantivy;
-//! use tantivy::schema::{SchemaBuilder, IndexRecordOption, TextOptions, TextFieldIndexing};
+//! use tantivy::schema::{Schema, IndexRecordOption, TextOptions, TextFieldIndexing};
 //! use tantivy::tokenizer::*;
 //! use tantivy::Index;
 //!
 //! # fn main() {
-//! let mut schema_builder = SchemaBuilder::new();
+//! let mut schema_builder = Schema::builder();
 //! let text_field_indexing = TextFieldIndexing::default()
 //!     .set_tokenizer("custom_en")
 //!     .set_index_option(IndexRecordOption::WithFreqsAndPositions);
@@ -157,12 +157,10 @@ pub use self::tokenizer::BoxedTokenizer;
 pub use self::tokenizer::{Token, TokenFilter, TokenStream, Tokenizer};
 pub use self::tokenizer_manager::TokenizerManager;
 
-
 #[cfg(test)]
 pub mod tests {
     use super::Token;
     use super::TokenizerManager;
-
 
     /// This is a function that can be used in tests and doc tests
     /// to assert a token's correctness.

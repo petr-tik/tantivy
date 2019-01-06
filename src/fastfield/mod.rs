@@ -127,19 +127,19 @@ mod tests {
     use common::CompositeFile;
     use directory::{Directory, RAMDirectory, WritePtr};
     use fastfield::FastFieldReader;
+    use rand::prelude::SliceRandom;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use schema::Document;
-    use rand::prelude::SliceRandom;
     use schema::Field;
+    use schema::Schema;
     use schema::FAST;
-    use schema::{Schema, SchemaBuilder};
     use std::collections::HashMap;
     use std::path::Path;
 
     lazy_static! {
         pub static ref SCHEMA: Schema = {
-            let mut schema_builder = SchemaBuilder::default();
+            let mut schema_builder = Schema::builder();
             schema_builder.add_u64_field("field", FAST);
             schema_builder.build()
         };
@@ -298,7 +298,7 @@ mod tests {
     fn test_signed_intfastfield() {
         let path = Path::new("test");
         let mut directory: RAMDirectory = RAMDirectory::create();
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
 
         let i64_field = schema_builder.add_i64_field("field", FAST);
         let schema = schema_builder.build();
@@ -342,7 +342,7 @@ mod tests {
     fn test_signed_intfastfield_default_val() {
         let path = Path::new("test");
         let mut directory: RAMDirectory = RAMDirectory::create();
-        let mut schema_builder = SchemaBuilder::new();
+        let mut schema_builder = Schema::builder();
         let i64_field = schema_builder.add_i64_field("field", FAST);
         let schema = schema_builder.build();
 
