@@ -2,7 +2,7 @@ extern crate wasm_bindgen;
 
 extern crate tantivy;
 
-use tantivy::collector::TopCollector;
+use tantivy::collector::top_;
 use tantivy::directory::static_directory::StaticDirectory;
 use tantivy::query::QueryParser;
 use tantivy::Index;
@@ -35,16 +35,9 @@ pub fn query(query: &str) -> String {
     let query_parser = QueryParser::for_index(&index, vec![command, text]);
     let query = query_parser.parse_query(query).unwrap();
 
-    let mut top_collector = TopCollector::with_limit(10);
-
-    searcher.search(&*query, &mut top_collector).unwrap();
-
-    let doc_addresses = top_collector.docs();
-
-    let mut docs = Vec::new();
-
-    for doc_address in doc_addresses {
-        let retrieved_doc = searcher.doc(doc_address).unwrap();
+    let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
+    for (_score, doc_address) in top_docs {
+        let retrieved_doc = searcher.doc(doc_address)?;
         docs.push(schema.to_json(&retrieved_doc));
     }
 

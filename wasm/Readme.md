@@ -7,6 +7,7 @@ You can index your files on server, serve wasm library + index to the client to 
 ### Requirements
 
 - `wasm-pack` to build and distribute
+- `wasm-bindgen` used by wasm-pack to generate JS bindings to the wasm library.
 - rust nightly - the `rust-toolchain` file specifies nightly, so cargo and rustc commands will call into nightly toolchain. 
 
 ### Building and running
