@@ -1,11 +1,14 @@
 [package]
 name = "tantivy-wasm"
 version = "0.1.0"
-authors = ["Paul Masurel <paul.masurel@gmail.com>", "Petr Tikilyaynen <tikilyaynen@gmail.com>"]
+authors = ["Paul Masurel <paul.masurel@gmail.com>"]
 
 [dependencies]
 tantivy = { path="../", default-features = false }
-wasm-bindgen = "*" 
+
+[dependencies.wasm-bindgen]
+version = "^0.2"
+features = ["serde-serialize"]
 
 [lib]
 crate-type = ["cdylib"]

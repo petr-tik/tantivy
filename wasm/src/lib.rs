@@ -2,7 +2,7 @@ extern crate wasm_bindgen;
 
 extern crate tantivy;
 
-use tantivy::collector::top_;
+use tantivy::collector::TopDocs;
 use tantivy::directory::static_directory::StaticDirectory;
 use tantivy::query::QueryParser;
 use tantivy::Index;
@@ -25,7 +25,7 @@ fn instantiate_index(data: &'static [u8]) -> Result<Index, tantivy::Error> {
 }
 
 #[wasm_bindgen]
-pub fn query(query: &str) -> String {
+pub fn query(query: &str) -> Vec<JsValue> {
     let index = instantiate_index(DATA).unwrap();
     let searcher = index.searcher();
     let schema = index.schema();
@@ -35,13 +35,13 @@ pub fn query(query: &str) -> String {
     let query_parser = QueryParser::for_index(&index, vec![command, text]);
     let query = query_parser.parse_query(query).unwrap();
 
-    let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
+    let top_docs = searcher.search(&query, &TopDocs::with_limit(10)).unwrap();
+    let mut docs: Vec<JsValue> = Vec::new();
     for (_score, doc_address) in top_docs {
-        let retrieved_doc = searcher.doc(doc_address)?;
-        docs.push(schema.to_json(&retrieved_doc));
+        let retrieved_doc = searcher.doc(doc_address).unwrap();
+        docs.push(JsValue::from_serde(&schema.to_json(&retrieved_doc)).unwrap());
     }
-
-    docs.join(";")
+    docs
 }
 
 #[cfg(test)]

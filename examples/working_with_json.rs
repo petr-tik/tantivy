@@ -36,6 +36,6 @@ fn main() -> tantivy::Result<()> {
     // Note that the schema is saved in your index directory.
     //
     // As a result, Indexes are aware of their schema, and you can use this feature
-    // just by opening an existing `Index`, and calling `index.schema()..parse_document(json)`.
+    // just by opening an existing `Index`, and calling `index.schema().parse_document(json)`.
     Ok(())
 }
