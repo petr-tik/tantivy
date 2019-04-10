@@ -59,7 +59,29 @@ impl<Item: FastValue> FastFieldReader<Item> {
     /// May panic if `doc` is greater than the segment
     // `maxdoc`.
     pub fn get(&self, doc: DocId) -> Item {
-        Item::from_u64(self.min_value_u64 + self.bit_unpacker.get(doc as usize))
+        self.get_u64(u64::from(doc ))
+    }
+
+    pub(crate) fn get_u64(&self, doc: u64) -> Item {
+        Item::from_u64(self.min_value_u64 + self.bit_unpacker.get(doc))
+    }
+
+    /// Internally `multivalued` also use SingleValue Fast fields.
+    /// It works as follows... A first column contains the list of start index
+    /// for each document, a second column contains the actual values.
+    ///
+    /// The values associated to a given doc, are then
+    ///  `second_column[first_column.get(doc)..first_column.get(doc+1)]`.
+    ///
+    /// Which means single value fast field reader can be indexed internally with
+    /// something different from a `DocId`. For this use case, we want to use `u64`
+    /// values.
+    ///
+    /// See `get_range` for an actual documentation about this method.
+    pub(crate) fn get_range_u64(&self, start: u64, output: &mut [Item]) {
+        for (i, out) in output.iter_mut().enumerate() {
+            *out = self.get_u64(start + (i as u64));
+        }
     }
 
     /// Fills an output buffer with the fast field values
@@ -75,16 +97,8 @@ impl<Item: FastValue> FastFieldReader<Item> {
     ///
     /// May panic if `start + output.len()` is greater than
     /// the segment's `maxdoc`.
-    ///
-    // TODO change start to `u64`.
-    // For multifastfield, start is an index in a second fastfield, not a `DocId`
-    pub fn get_range(&self, start: u32, output: &mut [Item]) {
-        // ok: Item is either `u64` or `i64`
-        let output_u64: &mut [u64] = unsafe { &mut *(output as *mut [Item] as *mut [u64]) };
-        self.bit_unpacker.get_range(start, output_u64);
-        for out in output_u64.iter_mut() {
-            *out = Item::from_u64(*out + self.min_value_u64).as_u64();
-        }
+    pub fn get_range(&self, start: DocId, output: &mut [Item]) {
+        self.get_range_u64(u64::from(start), output);
     }
 
     /// Returns the minimum value for this fast field.

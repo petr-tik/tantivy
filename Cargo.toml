@@ -1,6 +1,6 @@
 [package]
 name = "tantivy"
-version = "0.8.0"
+version = "0.9.0-dev"
 authors = ["Paul Masurel <paul.masurel@gmail.com>"]
 license = "MIT"
 categories = ["database-implementations", "data-structures"]
@@ -16,8 +16,14 @@ base64 = "0.10.0"
 byteorder = "1.0"
 lazy_static = "1"
 regex = "1.0"
+<<<<<<< HEAD
 fst = {version="0.3", default-features=false}
 fst-regex = { version="0.2", optional=true}
+=======
+tantivy-fst = "0.1"
+memmap = "0.7"
+fst-regex = { version="0.2" }
+>>>>>>> upstream/master
 lz4 = {version="1.20", optional=true}
 snap = {version="0.2"}
 atomicwrites = {version="0.2.2", optional=true}
@@ -29,6 +35,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 num_cpus = "1.2"
+fs2={version="0.4", optional=true}
 itertools = "0.8"
 levenshtein_automata = {version="0.1", features=["fst_automaton"]}
 bit-set = "0.5"
@@ -38,11 +45,18 @@ futures = "0.1"
 futures-cpupool = "0.1"
 owning_ref = "0.4"
 stable_deref_trait = "1.0.0"
+<<<<<<< HEAD
 rust-stemmers = "1"
 downcast = { version="0.10" }
 matches = "0.1"
 bitpacking = "0.5"
 census = "0.1"
+=======
+rust-stemmers = "1.1"
+downcast-rs = { version="1.0" }
+bitpacking = "0.6"
+census = "0.2"
+>>>>>>> upstream/master
 fnv = "1.0.6"
 owned-read = "0.4"
 failure = "0.1"
@@ -57,6 +71,7 @@ winapi = "0.2"
 [dev-dependencies]
 rand = "0.6"
 maplit = "1"
+matches = "0.1.8"
 
 [profile.release]
 opt-level = 3
@@ -69,9 +84,14 @@ overflow-checks = true
 
 [features]
 # by default no-fail is disabled. We manually enable it when running test.
+<<<<<<< HEAD
 default = ["mmap", "no_fail", "regex_query"]
 mmap = ["fst/mmap", "atomicwrites"]
 regex_query = ["fst-regex"]
+=======
+default = ["mmap", "no_fail"]
+mmap = ["atomicwrites", "fs2"]
+>>>>>>> upstream/master
 lz4-compression = ["lz4"]
 no_fail = ["fail/no_fail"]
 unstable = [] # useful for benches.

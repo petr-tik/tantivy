@@ -1,5 +1,4 @@
 use core::SegmentReader;
-use downcast::Downcast;
 use query::intersect_scorers;
 use query::score_combiner::{DoNothingCombiner, ScoreCombiner, SumWithCoordsCombiner};
 use query::term_query::TermScorer;
@@ -10,7 +9,6 @@ use query::RequiredOptionalScorer;
 use query::Scorer;
 use query::Union;
 use query::Weight;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use Result;
 
@@ -24,14 +22,11 @@ where
     }
 
     {
-        let is_all_term_queries = scorers.iter().all(|scorer| {
-            let scorer_ref: &Scorer = scorer.borrow();
-            Downcast::<TermScorer>::is_type(scorer_ref)
-        });
+        let is_all_term_queries = scorers.iter().all(|scorer| scorer.is::<TermScorer>());
         if is_all_term_queries {
             let scorers: Vec<TermScorer> = scorers
                 .into_iter()
-                .map(|scorer| *Downcast::<TermScorer>::downcast(scorer).unwrap())
+                .map(|scorer| *(scorer.downcast::<TermScorer>().map_err(|_| ()).unwrap()))
                 .collect();
             let scorer: Box<Scorer> = Box::new(Union::<TermScorer, TScoreCombiner>::from(scorers));
             return scorer;

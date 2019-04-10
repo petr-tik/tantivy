@@ -1,3 +1,30 @@
+Tantivy 0.9.0
+=====================
+*0.9.0 index format is not compatible with the 
+previous index format.*
+- Removed most unsafe (@fulmicoton)
+- Indexer memory footprint improved. (VInt comp, inlining the first block. (@fulmicoton)
+- Stemming in other language possible (@pentlander)
+- Segments with no docs are deleted earlier (@barrotsteindev)
+- Added grouped add and delete operations. 
+  They are guaranteed to happen together (i.e. they cannot be split by a commit). 
+  In addition, adds are guaranteed to happen on the same segment. (@elbow-jason)
+
+Tantivy 0.8.2
+=====================
+Fixing build for x86_64 platforms. (#496)
+No need to update from 0.8.1 if tantivy
+is building on your platform.
+
+
+Tantivy 0.8.1
+=====================
+Hotfix of #476.
+
+Merge was reflecting deletes before commit was passed. 
+Thanks @barrotsteindev  for reporting the bug.
+
+
 Tantivy 0.8.0
 =====================
 *No change in the index format*

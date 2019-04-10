@@ -1,8 +1,10 @@
 use core::MANAGED_FILEPATH;
-use directory::error::{DeleteError, IOError, OpenReadError, OpenWriteError};
+use directory::error::{DeleteError, IOError, LockError, OpenReadError, OpenWriteError};
+use directory::DirectoryLock;
+use directory::Lock;
+use directory::META_LOCK;
 use directory::{ReadOnlySource, WritePtr};
 use error::DataCorruption;
-use indexer::LockType;
 use serde_json;
 use std::collections::HashSet;
 use std::io;
@@ -92,6 +94,9 @@ impl ManagedDirectory {
     ///
     /// * `living_files` - List of files that are still used by the index.
     ///
+    /// The use a callback ensures that the list of living_files is computed
+    /// while we hold the lock on meta.
+    ///
     /// This method does not panick nor returns errors.
     /// If a file cannot be deleted (for permission reasons for instance)
     /// an error is simply logged, and the file remains in the list of managed
@@ -122,7 +127,7 @@ impl ManagedDirectory {
             // 2) writer change meta.json (for instance after a merge or a commit)
             // 3) gc kicks in.
             // 4) gc removes a file that was useful for process B, before process B opened it.
-            if let Ok(_meta_lock) = LockType::MetaLock.acquire_lock(self) {
+            if let Ok(_meta_lock) = self.acquire_lock(&META_LOCK) {
                 let living_files = get_living_files();
                 for managed_path in &meta_informations_rlock.managed_paths {
                     if !living_files.contains(managed_path) {
@@ -231,6 +236,10 @@ impl Directory for ManagedDirectory {
 
     fn exists(&self, path: &Path) -> bool {
         self.directory.exists(path)
+    }
+
+    fn acquire_lock(&self, lock: &Lock) -> result::Result<DirectoryLock, LockError> {
+        self.directory.acquire_lock(lock)
     }
 }
 

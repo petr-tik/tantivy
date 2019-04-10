@@ -31,7 +31,6 @@ pub(crate) use self::stacker::compute_table_size;
 pub use common::HasLen;
 
 pub(crate) const USE_SKIP_INFO_LIMIT: u32 = COMPRESSION_BLOCK_SIZE as u32;
-
 pub(crate) type UnorderedTermId = u64;
 
 #[cfg_attr(feature = "cargo-clippy", allow(clippy::enum_variant_names))]
@@ -280,7 +279,7 @@ pub mod tests {
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
         {
-            let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+            let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
             {
                 let mut doc = Document::default();
                 doc.add_text(text_field, "g b b d c g c");
@@ -322,7 +321,7 @@ pub mod tests {
 
             let index = Index::create_in_ram(schema);
             {
-                let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+                let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
                 for i in 0..num_docs {
                     let mut doc = Document::default();
                     doc.add_u64(value_field, 2);
@@ -399,7 +398,7 @@ pub mod tests {
 
         // delete some of the documents
         {
-            let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+            let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
             index_writer.delete_term(term_0);
             assert!(index_writer.commit().is_ok());
         }
@@ -449,7 +448,7 @@ pub mod tests {
 
         // delete everything else
         {
-            let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+            let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
             index_writer.delete_term(term_1);
 
             assert!(index_writer.commit().is_ok());
@@ -457,25 +456,14 @@ pub mod tests {
         index.load_searchers().unwrap();
 
         let searcher = index.searcher();
-        let segment_reader = searcher.segment_reader(0);
 
         // finally, check that it's empty
         {
-            let mut segment_postings = segment_reader
-                .inverted_index(term_2.field())
-                .read_postings(&term_2, IndexRecordOption::Basic)
-                .unwrap();
-
-            assert_eq!(segment_postings.skip_next(0), SkipResult::Reached);
-            assert_eq!(segment_postings.doc(), 0);
-            assert!(segment_reader.is_deleted(0));
-
-            let mut segment_postings = segment_reader
-                .inverted_index(term_2.field())
-                .read_postings(&term_2, IndexRecordOption::Basic)
-                .unwrap();
-
-            assert_eq!(segment_postings.skip_next(num_docs), SkipResult::End);
+            let searchable_segment_ids = index
+                .searchable_segment_ids()
+                .expect("could not get index segment ids");
+            assert!(searchable_segment_ids.is_empty());
+            assert_eq!(searcher.num_docs(), 0);
         }
     }
 
@@ -506,7 +494,7 @@ pub mod tests {
             let index = Index::create_in_ram(schema);
             let posting_list_size = 1_000_000;
             {
-                let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+                let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
                 for _ in 0..posting_list_size {
                     let mut doc = Document::default();
                     if rng.gen_bool(1f64 / 15f64) {

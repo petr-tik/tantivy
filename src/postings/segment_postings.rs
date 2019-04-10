@@ -2,7 +2,6 @@ use common::BitSet;
 use common::HasLen;
 use common::{BinarySerializable, VInt};
 use docset::{DocSet, SkipResult};
-use fst::Streamer;
 use owned_read::OwnedRead;
 use positions::PositionReader;
 use postings::compression::compressed_block_size;
@@ -14,9 +13,8 @@ use postings::SkipReader;
 use postings::USE_SKIP_INFO_LIMIT;
 use schema::IndexRecordOption;
 use std::cmp::Ordering;
+use tantivy_fst::Streamer;
 use DocId;
-
-const EMPTY_ARR: [u8; 0] = [];
 
 struct PositionComputer {
     // store the amount of position int
@@ -123,22 +121,23 @@ impl SegmentPostings {
     }
 }
 
-fn exponential_search(target: u32, arr: &[u32]) -> (usize, usize) {
-    let mut start = 0;
+fn linear_search(arr: &[u32], target: u32) -> usize {
+    arr.iter().map(|&el| if el < target { 1 } else { 0 }).sum()
+}
+
+fn exponential_search(arr: &[u32], target: u32) -> (usize, usize) {
     let end = arr.len();
-    debug_assert!(target <= arr[end - 1]);
-    let mut jump = 1;
-    loop {
-        let new = start + jump;
-        if new >= end {
-            return (start, end);
+    let mut begin = 0;
+    for &pivot in &[1, 3, 7, 15, 31, 63] {
+        if pivot >= end {
+            break;
         }
-        if arr[new] > target {
-            return (start, new);
+        if arr[pivot] > target {
+            return (begin, pivot);
         }
-        start = new;
-        jump *= 2;
+        begin = pivot;
     }
+    (begin, end)
 }
 
 /// Search the first index containing an element greater or equal to the target.
@@ -149,12 +148,8 @@ fn exponential_search(target: u32, arr: &[u32]) -> (usize, usize) {
 /// The target is assumed greater or equal to the first element.
 /// The target is assumed smaller or equal to the last element.
 fn search_within_block(block_docs: &[u32], target: u32) -> usize {
-    let (start, end) = exponential_search(target, block_docs);
-    start.wrapping_add(
-        block_docs[start..end]
-            .binary_search(&target)
-            .unwrap_or_else(|e| e),
-    )
+    let (start, end) = exponential_search(block_docs, target);
+    start + linear_search(&block_docs[start..end], target)
 }
 
 impl DocSet for SegmentPostings {
@@ -372,7 +367,7 @@ impl BlockSegmentPostings {
         let (skip_data_opt, postings_data) = split_into_skips_and_postings(doc_freq, data);
         let skip_reader = match skip_data_opt {
             Some(skip_data) => SkipReader::new(skip_data, record_option),
-            None => SkipReader::new(OwnedRead::new(&EMPTY_ARR[..]), record_option),
+            None => SkipReader::new(OwnedRead::new(&[][..]), record_option),
         };
         let doc_freq = doc_freq as usize;
         let num_vint_docs = doc_freq % COMPRESSION_BLOCK_SIZE;
@@ -406,7 +401,7 @@ impl BlockSegmentPostings {
         if let Some(skip_data) = skip_data_opt {
             self.skip_reader.reset(skip_data);
         } else {
-            self.skip_reader.reset(OwnedRead::new(&EMPTY_ARR[..]))
+            self.skip_reader.reset(OwnedRead::new(&[][..]))
         }
         self.doc_offset = 0;
         self.doc_freq = doc_freq as usize;
@@ -621,6 +616,7 @@ impl<'b> Streamer<'b> for BlockSegmentPostings {
 mod tests {
 
     use super::exponential_search;
+    use super::linear_search;
     use super::search_within_block;
     use super::BlockSegmentPostings;
     use super::BlockSegmentPostingsSkipResult;
@@ -628,13 +624,28 @@ mod tests {
     use common::HasLen;
     use core::Index;
     use docset::DocSet;
-    use fst::Streamer;
     use schema::IndexRecordOption;
     use schema::Schema;
     use schema::Term;
     use schema::INT_INDEXED;
+    use tantivy_fst::Streamer;
     use DocId;
     use SkipResult;
+
+    #[test]
+    fn test_linear_search() {
+        let len: usize = 50;
+        let arr: Vec<u32> = (0..len).map(|el| 1u32 + (el as u32) * 2).collect();
+        for target in 1..*arr.last().unwrap() {
+            let res = linear_search(&arr[..], target);
+            if res > 0 {
+                assert!(arr[res - 1] < target);
+            }
+            if res < len {
+                assert!(arr[res] >= target);
+            }
+        }
+    }
 
     #[test]
     fn test_empty_segment_postings() {
@@ -664,10 +675,10 @@ mod tests {
 
     #[test]
     fn test_exponentiel_search() {
-        assert_eq!(exponential_search(0, &[1, 2]), (0, 1));
-        assert_eq!(exponential_search(1, &[1, 2]), (0, 1));
+        assert_eq!(exponential_search(&[1, 2], 0), (0, 1));
+        assert_eq!(exponential_search(&[1, 2], 1), (0, 1));
         assert_eq!(
-            exponential_search(7, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+            exponential_search(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 7),
             (3, 7)
         );
     }
@@ -752,7 +763,7 @@ mod tests {
         let int_field = schema_builder.add_u64_field("id", INT_INDEXED);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
-        let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+        let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
         let mut last_doc = 0u32;
         for &doc in docs {
             for _ in last_doc..doc {
@@ -823,7 +834,7 @@ mod tests {
         let int_field = schema_builder.add_u64_field("id", INT_INDEXED);
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
-        let mut index_writer = index.writer_with_num_threads(1, 40_000_000).unwrap();
+        let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
         // create two postings list, one containg even number,
         // the other containing odd numbers.
         for i in 0..6 {

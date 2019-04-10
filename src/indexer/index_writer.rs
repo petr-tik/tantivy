@@ -1,4 +1,4 @@
-use super::operation::AddOperation;
+use super::operation::{AddOperation, UserOperation};
 use super::segment_updater::SegmentUpdater;
 use super::PreparedCommit;
 use bit_set::BitSet;
@@ -9,15 +9,15 @@ use core::SegmentId;
 use core::SegmentMeta;
 use core::SegmentReader;
 use crossbeam::channel;
+use directory::DirectoryLock;
 use docset::DocSet;
 use error::TantivyError;
 use fastfield::write_delete_bitset;
-use futures::sync::oneshot::Receiver;
+use futures::{Canceled, Future};
 use indexer::delete_queue::{DeleteCursor, DeleteQueue};
 use indexer::doc_opstamp_mapping::DocToOpstampMapping;
 use indexer::operation::DeleteOperation;
 use indexer::stamper::Stamper;
-use indexer::DirectoryLock;
 use indexer::MergePolicy;
 use indexer::SegmentEntry;
 use indexer::SegmentWriter;
@@ -26,7 +26,8 @@ use schema::Document;
 use schema::IndexRecordOption;
 use schema::Term;
 use std::mem;
-use std::mem::swap;
+use std::ops::Range;
+use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use Result;
@@ -43,8 +44,8 @@ pub const HEAP_SIZE_MAX: usize = u32::max_value() as usize - MARGIN_IN_BYTES;
 // reaches `PIPELINE_MAX_SIZE_IN_DOCS`
 const PIPELINE_MAX_SIZE_IN_DOCS: usize = 10_000;
 
-type DocumentSender = channel::Sender<AddOperation>;
-type DocumentReceiver = channel::Receiver<AddOperation>;
+type DocumentSender = channel::Sender<Vec<AddOperation>>;
+type DocumentReceiver = channel::Receiver<Vec<AddOperation>>;
 
 /// Split the thread memory budget into
 /// - the heap size
@@ -52,17 +53,19 @@ type DocumentReceiver = channel::Receiver<AddOperation>;
 ///
 /// Returns (the heap size in bytes, the hash table size in number of bits)
 fn initial_table_size(per_thread_memory_budget: usize) -> usize {
+    assert!(per_thread_memory_budget > 1_000);
     let table_size_limit: usize = per_thread_memory_budget / 3;
-    (1..)
+    if let Some(limit) = (1..)
         .take_while(|num_bits: &usize| compute_table_size(*num_bits) < table_size_limit)
         .last()
-        .unwrap_or_else(|| {
-            panic!(
-                "Per thread memory is too small: {}",
-                per_thread_memory_budget
-            )
-        })
-        .min(19) // we cap it at 512K
+    {
+        limit.min(19) // we cap it at 2^19 = 512K.
+    } else {
+        unreachable!(
+            "Per thread memory is too small: {}",
+            per_thread_memory_budget
+        );
+    }
 }
 
 /// `IndexWriter` is the user entry-point to add document to an index.
@@ -256,7 +259,7 @@ pub fn advance_deletes(
             write_delete_bitset(&delete_bitset, &mut delete_file)?;
         }
     }
-    segment_entry.set_meta((*segment.meta()).clone());
+    segment_entry.set_meta(segment.meta().clone());
     Ok(())
 }
 
@@ -264,7 +267,7 @@ fn index_documents(
     memory_budget: usize,
     segment: &Segment,
     generation: usize,
-    document_iterator: &mut Iterator<Item = AddOperation>,
+    document_iterator: &mut Iterator<Item = Vec<AddOperation>>,
     segment_updater: &mut SegmentUpdater,
     mut delete_cursor: DeleteCursor,
 ) -> Result<bool> {
@@ -272,11 +275,11 @@ fn index_documents(
     let segment_id = segment.id();
     let table_size = initial_table_size(memory_budget);
     let mut segment_writer = SegmentWriter::for_segment(table_size, segment.clone(), &schema)?;
-    for doc in document_iterator {
-        segment_writer.add_document(doc, &schema)?;
-
+    for documents in document_iterator {
+        for doc in documents {
+            segment_writer.add_document(doc, &schema)?;
+        }
         let mem_usage = segment_writer.mem_usage();
-
         if mem_usage >= memory_budget - MARGIN_IN_BYTES {
             info!(
                 "Buffer limit reached, flushing segment with maxdoc={}.",
@@ -302,7 +305,7 @@ fn index_documents(
 
     let last_docstamp: u64 = *(doc_opstamps.last().unwrap());
 
-    let segment_entry: SegmentEntry = if delete_cursor.get().is_some() {
+    let delete_bitset_opt = if delete_cursor.get().is_some() {
         let doc_to_opstamps = DocToOpstampMapping::from(doc_opstamps);
         let segment_reader = SegmentReader::open(segment)?;
         let mut deleted_bitset = BitSet::with_capacity(num_docs as usize);
@@ -313,18 +316,17 @@ fn index_documents(
             &doc_to_opstamps,
             last_docstamp,
         )?;
-        SegmentEntry::new(segment_meta, delete_cursor, {
-            if may_have_deletes {
-                Some(deleted_bitset)
-            } else {
-                None
-            }
-        })
+        if may_have_deletes {
+            Some(deleted_bitset)
+        } else {
+            None
+        }
     } else {
         // if there are no delete operation in the queue, no need
         // to even open the segment.
-        SegmentEntry::new(segment_meta, delete_cursor, None)
+        None
     };
+    let segment_entry = SegmentEntry::new(segment_meta, delete_cursor, delete_bitset_opt);
     Ok(segment_updater.add_segment(generation, segment_entry))
 }
 
@@ -366,13 +368,16 @@ impl IndexWriter {
             .add_segment(self.generation, segment_entry);
     }
 
-    /// *Experimental & Advanced API* Creates a new segment.
-    /// and marks it as currently in write.
+    /// Creates a new segment.
     ///
     /// This method is useful only for users trying to do complex
     /// operations, like converting an index format to another.
+    ///
+    /// It is safe to start writing file associated to the new `Segment`.
+    /// These will not be garbage collected as long as an instance object of
+    /// `SegmentMeta` object associated to the new `Segment` is "alive".
     pub fn new_segment(&self) -> Segment {
-        self.segment_updater.new_segment()
+        self.index.new_segment()
     }
 
     /// Spawns a new worker thread for indexing.
@@ -387,6 +392,7 @@ impl IndexWriter {
         let mut delete_cursor = self.delete_queue.cursor();
 
         let mem_budget = self.heap_size_in_bytes_per_thread;
+        let index = self.index.clone();
         let join_handle: JoinHandle<Result<()>> = thread::Builder::new()
             .name(format!(
                 "thrd-tantivy-index{}-gen{}",
@@ -404,15 +410,19 @@ impl IndexWriter {
                     // this is a valid guarantee as the
                     // peeked document now belongs to
                     // our local iterator.
-                    if let Some(operation) = document_iterator.peek() {
-                        delete_cursor.skip_to(operation.opstamp);
+                    if let Some(operations) = document_iterator.peek() {
+                        if let Some(first) = operations.first() {
+                            delete_cursor.skip_to(first.opstamp);
+                        } else {
+                            return Ok(());
+                        }
                     } else {
                         // No more documents.
                         // Happens when there is a commit, or if the `IndexWriter`
                         // was dropped.
                         return Ok(());
                     }
-                    let segment = segment_updater.new_segment();
+                    let segment = index.new_segment();
                     index_documents(
                         mem_budget,
                         &segment,
@@ -429,7 +439,7 @@ impl IndexWriter {
     }
 
     /// Accessor to the merge policy.
-    pub fn get_merge_policy(&self) -> Box<MergePolicy> {
+    pub fn get_merge_policy(&self) -> Arc<Box<MergePolicy>> {
         self.segment_updater.get_merge_policy()
     }
 
@@ -454,7 +464,10 @@ impl IndexWriter {
     /// Merges a given list of segments
     ///
     /// `segment_ids` is required to be non-empty.
-    pub fn merge(&mut self, segment_ids: &[SegmentId]) -> Result<Receiver<SegmentMeta>> {
+    pub fn merge(
+        &mut self,
+        segment_ids: &[SegmentId],
+    ) -> Result<impl Future<Item = SegmentMeta, Error = Canceled>> {
         self.segment_updater.start_merge(segment_ids)
     }
 
@@ -467,11 +480,10 @@ impl IndexWriter {
     ///
     /// Returns the former segment_ready channel.
     fn recreate_document_channel(&mut self) -> DocumentReceiver {
-        let (mut document_sender, mut document_receiver): (DocumentSender, DocumentReceiver) =
+        let (document_sender, document_receiver): (DocumentSender, DocumentReceiver) =
             channel::bounded(PIPELINE_MAX_SIZE_IN_DOCS);
-        swap(&mut self.document_sender, &mut document_sender);
-        swap(&mut self.document_receiver, &mut document_receiver);
-        document_receiver
+        mem::replace(&mut self.document_sender, document_sender);
+        mem::replace(&mut self.document_receiver, document_receiver)
     }
 
     /// Rollback to the last commit
@@ -558,17 +570,12 @@ impl IndexWriter {
         // and recreate a new one channels.
         self.recreate_document_channel();
 
-        let mut former_workers_join_handle = Vec::new();
-        swap(
-            &mut former_workers_join_handle,
-            &mut self.workers_join_handle,
-        );
+        let former_workers_join_handle = mem::replace(&mut self.workers_join_handle, Vec::new());
 
         for worker_handle in former_workers_join_handle {
             let indexing_worker_result = worker_handle
                 .join()
                 .map_err(|e| TantivyError::ErrorInThread(format!("{:?}", e)))?;
-
             indexing_worker_result?;
             // add a new worker for the next generation.
             self.add_indexing_worker()?;
@@ -641,32 +648,176 @@ impl IndexWriter {
     pub fn add_document(&mut self, document: Document) -> u64 {
         let opstamp = self.stamper.stamp();
         let add_operation = AddOperation { opstamp, document };
-        let send_result = self.document_sender.send(add_operation);
+        let send_result = self.document_sender.send(vec![add_operation]);
         if let Err(e) = send_result {
             panic!("Failed to index document. Sending to indexing channel failed. This probably means all of the indexing threads have panicked. {:?}", e);
         }
         opstamp
+    }
+
+    /// Gets a range of stamps from the stamper and "pops" the last stamp
+    /// from the range returning a tuple of the last optstamp and the popped
+    /// range.
+    ///
+    /// The total number of stamps generated by this method is `count + 1`;
+    /// each operation gets a stamp from the `stamps` iterator and `last_opstamp`
+    /// is for the batch itself.
+    fn get_batch_opstamps(&mut self, count: u64) -> (u64, Range<u64>) {
+        let Range { start, end } = self.stamper.stamps(count + 1u64);
+        let last_opstamp = end - 1;
+        let stamps = Range {
+            start,
+            end: last_opstamp,
+        };
+        (last_opstamp, stamps)
+    }
+
+    /// Runs a group of document operations ensuring that the operations are
+    /// assigned contigous u64 opstamps and that add operations of the same
+    /// group are flushed into the same segment.
+    ///
+    /// If the indexing pipeline is full, this call may block.
+    ///
+    /// Each operation of the given `user_operations` will receive an in-order,
+    /// contiguous u64 opstamp. The entire batch itself is also given an
+    /// opstamp that is 1 greater than the last given operation. This
+    /// `batch_opstamp` is the return value of `run`. An empty group of
+    /// `user_operations`, an empty `Vec<UserOperation>`, still receives
+    /// a valid opstamp even though no changes were _actually_ made to the index.
+    ///
+    /// Like adds and deletes (see `IndexWriter.add_document` and
+    /// `IndexWriter.delete_term`), the changes made by calling `run` will be
+    /// visible to readers only after calling `commit()`.
+    pub fn run(&mut self, user_operations: Vec<UserOperation>) -> u64 {
+        let count = user_operations.len() as u64;
+        if count == 0 {
+            return self.stamper.stamp();
+        }
+        let (batch_opstamp, stamps) = self.get_batch_opstamps(count);
+
+        let mut adds: Vec<AddOperation> = Vec::new();
+
+        for (user_op, opstamp) in user_operations.into_iter().zip(stamps) {
+            match user_op {
+                UserOperation::Delete(term) => {
+                    let delete_operation = DeleteOperation {
+                        opstamp,
+                        term,
+                    };
+                    self.delete_queue.push(delete_operation);
+                }
+                UserOperation::Add(document) => {
+                    let add_operation = AddOperation {
+                        opstamp,
+                        document
+                    };
+                    adds.push(add_operation);
+                }
+            }
+        }
+        let send_result = self.document_sender.send(adds);
+        if let Err(e) = send_result {
+            panic!("Failed to index document. Sending to indexing channel failed. This probably means all of the indexing threads have panicked. {:?}", e);
+        };
+
+        batch_opstamp
     }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use super::super::operation::UserOperation;
     use super::initial_table_size;
+    use collector::TopDocs;
+    use directory::error::LockError;
     use error::*;
     use indexer::NoMergePolicy;
-    use schema::{self, Document};
+    use query::TermQuery;
+    use schema::{self, Document, IndexRecordOption};
     use Index;
     use Term;
+
+    #[test]
+    fn test_operations_group() {
+        // an operations group with 2 items should cause 3 opstamps 0, 1, and 2.
+        let mut schema_builder = schema::Schema::builder();
+        let text_field = schema_builder.add_text_field("text", schema::TEXT);
+        let index = Index::create_in_ram(schema_builder.build());
+        let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
+        let operations = vec![
+            UserOperation::Add(doc!(text_field=>"a")),
+            UserOperation::Add(doc!(text_field=>"b")),
+        ];
+        let batch_opstamp1 = index_writer.run(operations);
+        assert_eq!(batch_opstamp1, 2u64);
+    }
+
+    #[test]
+    fn test_ordered_batched_operations() {
+        // * one delete for `doc!(field=>"a")`
+        // * one add for `doc!(field=>"a")`
+        // * one add for `doc!(field=>"b")`
+        // * one delete for `doc!(field=>"b")`
+        // after commit there is one doc with "a" and 0 doc with "b"
+        let mut schema_builder = schema::Schema::builder();
+        let text_field = schema_builder.add_text_field("text", schema::TEXT);
+        let index = Index::create_in_ram(schema_builder.build());
+        let mut index_writer = index.writer_with_num_threads(1, 3_000_000).unwrap();
+        let a_term = Term::from_field_text(text_field, "a");
+        let b_term = Term::from_field_text(text_field, "b");
+        let operations = vec![
+            UserOperation::Delete(a_term),
+            UserOperation::Add(doc!(text_field=>"a")),
+            UserOperation::Add(doc!(text_field=>"b")),
+            UserOperation::Delete(b_term),
+        ];
+
+        index_writer.run(operations);
+        index_writer.commit().expect("failed to commit");
+        index.load_searchers().expect("failed to load searchers");
+
+        let a_term = Term::from_field_text(text_field, "a");
+        let b_term = Term::from_field_text(text_field, "b");
+
+        let a_query = TermQuery::new(a_term, IndexRecordOption::Basic);
+        let b_query = TermQuery::new(b_term, IndexRecordOption::Basic);
+
+        let searcher = index.searcher();
+
+        let a_docs = searcher
+            .search(&a_query, &TopDocs::with_limit(1))
+            .expect("search for a failed");
+
+        let b_docs = searcher
+            .search(&b_query, &TopDocs::with_limit(1))
+            .expect("search for b failed");
+
+        assert_eq!(a_docs.len(), 1);
+        assert_eq!(b_docs.len(), 0);
+    }
+
+    #[test]
+    fn test_empty_operations_group() {
+        let schema_builder = schema::Schema::builder();
+        let index = Index::create_in_ram(schema_builder.build());
+        let mut index_writer = index.writer(3_000_000).unwrap();
+        let operations1 = vec![];
+        let batch_opstamp1 = index_writer.run(operations1);
+        assert_eq!(batch_opstamp1, 0u64);
+        let operations2 = vec![];
+        let batch_opstamp2 = index_writer.run(operations2);
+        assert_eq!(batch_opstamp2, 1u64);
+    }
 
     #[test]
     fn test_lockfile_stops_duplicates() {
         let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
-        let _index_writer = index.writer(40_000_000).unwrap();
-        match index.writer(40_000_000) {
-            Err(TantivyError::LockFailure(_)) => {}
-            _ => panic!("Expected FileAlreadyExists error"),
+        let _index_writer = index.writer(3_000_000).unwrap();
+        match index.writer(3_000_000) {
+            Err(TantivyError::LockFailure(LockError::LockBusy, _)) => {}
+            _ => panic!("Expected a `LockFailure` error"),
         }
     }
 
@@ -678,8 +829,7 @@ mod tests {
         match index.writer_with_num_threads(1, 3_000_000) {
             Err(err) => {
                 let err_msg = err.to_string();
-                assert!(err_msg.contains("Lockfile"));
-                assert!(err_msg.contains("Possible causes:"))
+                assert!(err_msg.contains("already an `IndexWriter`"));
             }
             _ => panic!("Expected LockfileAlreadyExists error"),
         }
@@ -689,7 +839,7 @@ mod tests {
     fn test_set_merge_policy() {
         let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
-        let index_writer = index.writer(40_000_000).unwrap();
+        let index_writer = index.writer(3_000_000).unwrap();
         assert_eq!(
             format!("{:?}", index_writer.get_merge_policy()),
             "LogMergePolicy { min_merge_size: 8, min_layer_size: 10000, \
@@ -708,11 +858,11 @@ mod tests {
         let schema_builder = schema::Schema::builder();
         let index = Index::create_in_ram(schema_builder.build());
         {
-            let _index_writer = index.writer(40_000_000).unwrap();
+            let _index_writer = index.writer(3_000_000).unwrap();
             // the lock should be released when the
             // index_writer leaves the scope.
         }
-        let _index_writer_two = index.writer(40_000_000).unwrap();
+        let _index_writer_two = index.writer(3_000_000).unwrap();
     }
 
     #[test]
@@ -739,7 +889,7 @@ mod tests {
                 index_writer.add_document(doc!(text_field=>"b"));
                 index_writer.add_document(doc!(text_field=>"c"));
             }
-            assert_eq!(index_writer.commit().unwrap(), 2u64);
+            assert!(index_writer.commit().is_ok());
             index.load_searchers().unwrap();
             assert_eq!(num_docs_containing("a"), 0);
             assert_eq!(num_docs_containing("b"), 1);
@@ -802,7 +952,6 @@ mod tests {
             {
                 let mut prepared_commit = index_writer.prepare_commit().expect("commit failed");
                 prepared_commit.set_payload("first commit");
-                assert_eq!(prepared_commit.opstamp(), 100);
                 prepared_commit.commit().expect("commit failed");
             }
             {
@@ -836,7 +985,6 @@ mod tests {
             {
                 let mut prepared_commit = index_writer.prepare_commit().expect("commit failed");
                 prepared_commit.set_payload("first commit");
-                assert_eq!(prepared_commit.opstamp(), 100);
                 prepared_commit.abort().expect("commit failed");
             }
             {
@@ -860,9 +1008,9 @@ mod tests {
 
     #[test]
     fn test_hashmap_size() {
-        assert_eq!(initial_table_size(100_000), 12);
-        assert_eq!(initial_table_size(1_000_000), 15);
-        assert_eq!(initial_table_size(10_000_000), 18);
+        assert_eq!(initial_table_size(100_000), 11);
+        assert_eq!(initial_table_size(1_000_000), 14);
+        assert_eq!(initial_table_size(10_000_000), 17);
         assert_eq!(initial_table_size(1_000_000_000), 19);
     }
 

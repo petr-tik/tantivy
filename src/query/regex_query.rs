@@ -1,10 +1,14 @@
 extern crate fst_regex;
 
 use error::TantivyError;
+<<<<<<< HEAD
 use self::fst_regex::Regex;
+=======
+>>>>>>> upstream/master
 use query::{AutomatonWeight, Query, Weight};
 use schema::Field;
 use std::clone::Clone;
+use tantivy_fst::Regex;
 use Result;
 use Searcher;
 

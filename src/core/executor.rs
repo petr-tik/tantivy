@@ -64,7 +64,7 @@ impl Executor {
                     // This is important as it makes it possible for the fruit_receiver iteration to
                     // terminate.
                 };
-                // This is lame, but it does not use unsafe code.
+                // This is lame, but safe.
                 let mut results_with_position = Vec::with_capacity(num_fruits);
                 for (pos, fruit_res) in fruit_receiver {
                     let fruit = fruit_res?;
@@ -123,15 +123,14 @@ mod tests {
         }
     }
 
-}
-
-#[test]
-fn test_map_multithread() {
-    let result: Vec<usize> = Executor::multi_thread(3, "search-test")
-        .map(|i| Ok(i * 2), 0..10)
-        .unwrap();
-    assert_eq!(result.len(), 10);
-    for i in 0..10 {
-        assert_eq!(result[i], i * 2);
+    #[test]
+    fn test_map_multithread() {
+        let result: Vec<usize> = Executor::multi_thread(3, "search-test")
+            .map(|i| Ok(i * 2), 0..10)
+            .unwrap();
+        assert_eq!(result.len(), 10);
+        for i in 0..10 {
+            assert_eq!(result[i], i * 2);
+        }
     }
 }

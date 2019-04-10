@@ -1,6 +1,8 @@
 use super::stacker::{Addr, MemoryArena, TermHashMap};
 
-use postings::recorder::{NothingRecorder, Recorder, TFAndPositionRecorder, TermFrequencyRecorder};
+use postings::recorder::{
+    BufferLender, NothingRecorder, Recorder, TFAndPositionRecorder, TermFrequencyRecorder,
+};
 use postings::UnorderedTermId;
 use postings::{FieldSerializer, InvertedIndexSerializer};
 use schema::IndexRecordOption;
@@ -49,6 +51,31 @@ pub struct MultiFieldPostingsWriter {
     per_field_postings_writers: Vec<Box<PostingsWriter>>,
 }
 
+fn make_field_partition(
+    term_offsets: &[(&[u8], Addr, UnorderedTermId)]
+) -> Vec<(Field, usize, usize)> {
+    let term_offsets_it = term_offsets
+        .iter()
+        .map(|(key, _, _)| Term::wrap(key).field())
+        .enumerate();
+    let mut prev_field = Field(u32::max_value());
+    let mut fields = vec![];
+    let mut offsets = vec![];
+    for (offset, field) in term_offsets_it {
+        if field != prev_field {
+            prev_field = field;
+            fields.push(field);
+            offsets.push(offset);
+        }
+    }
+    offsets.push(term_offsets.len());
+    let mut field_offsets = vec![];
+    for i in 0..fields.len() {
+        field_offsets.push((fields[i], offsets[i], offsets[i + 1]));
+    }
+    field_offsets
+}
+
 impl MultiFieldPostingsWriter {
     /// Create a new `MultiFieldPostingsWriter` given
     /// a schema and a heap.
@@ -94,36 +121,16 @@ impl MultiFieldPostingsWriter {
         &self,
         serializer: &mut InvertedIndexSerializer,
     ) -> Result<HashMap<Field, HashMap<UnorderedTermId, TermOrdinal>>> {
-        let mut term_offsets: Vec<(&[u8], Addr, UnorderedTermId)> = self
-            .term_index
-            .iter()
-            .map(|(term_bytes, addr, bucket_id)| (term_bytes, addr, bucket_id as UnorderedTermId))
-            .collect();
+        let mut term_offsets: Vec<(&[u8], Addr, UnorderedTermId)> =
+            self.term_index.iter().collect();
         term_offsets.sort_unstable_by_key(|&(k, _, _)| k);
-
-        let mut offsets: Vec<(Field, usize)> = vec![];
-        let term_offsets_it = term_offsets
-            .iter()
-            .cloned()
-            .map(|(key, _, _)| Term::wrap(key).field())
-            .enumerate();
 
         let mut unordered_term_mappings: HashMap<Field, HashMap<UnorderedTermId, TermOrdinal>> =
             HashMap::new();
 
-        let mut prev_field = Field(u32::max_value());
-        for (offset, field) in term_offsets_it {
-            if field != prev_field {
-                offsets.push((field, offset));
-                prev_field = field;
-            }
-        }
-        offsets.push((Field(0), term_offsets.len()));
+        let field_offsets = make_field_partition(&term_offsets);
 
-        for i in 0..(offsets.len() - 1) {
-            let (field, start) = offsets[i];
-            let (_, stop) = offsets[i + 1];
-
+        for (field, start, stop) in field_offsets {
             let field_entry = self.schema.get_field_entry(field);
 
             match *field_entry.field_type() {
@@ -213,7 +220,7 @@ pub trait PostingsWriter {
 
 /// The `SpecializedPostingsWriter` is just here to remove dynamic
 /// dispatch to the recorder information.
-pub struct SpecializedPostingsWriter<Rec: Recorder + 'static> {
+pub(crate) struct SpecializedPostingsWriter<Rec: Recorder + 'static> {
     total_num_tokens: u64,
     _recorder_type: PhantomData<Rec>,
 }
@@ -245,8 +252,7 @@ impl<Rec: Recorder + 'static> PostingsWriter for SpecializedPostingsWriter<Rec> 
         debug_assert!(term.as_slice().len() >= 4);
         self.total_num_tokens += 1;
         term_index.mutate_or_create(term, |opt_recorder: Option<Rec>| {
-            if opt_recorder.is_some() {
-                let mut recorder = opt_recorder.unwrap();
+            if let Some(mut recorder) = opt_recorder {
                 let current_doc = recorder.current_doc();
                 if current_doc != doc {
                     recorder.close_doc(heap);
@@ -255,7 +261,7 @@ impl<Rec: Recorder + 'static> PostingsWriter for SpecializedPostingsWriter<Rec> 
                 recorder.record_position(position, heap);
                 recorder
             } else {
-                let mut recorder = Rec::new(heap);
+                let mut recorder = Rec::new();
                 recorder.new_doc(doc, heap);
                 recorder.record_position(position, heap);
                 recorder
@@ -270,10 +276,11 @@ impl<Rec: Recorder + 'static> PostingsWriter for SpecializedPostingsWriter<Rec> 
         termdict_heap: &MemoryArena,
         heap: &MemoryArena,
     ) -> io::Result<()> {
+        let mut buffer_lender = BufferLender::default();
         for &(term_bytes, addr, _) in term_addrs {
-            let recorder: Rec = unsafe { termdict_heap.read(addr) };
+            let recorder: Rec = termdict_heap.read(addr);
             serializer.new_term(&term_bytes[4..])?;
-            recorder.serialize(serializer, heap)?;
+            recorder.serialize(&mut buffer_lender, serializer, heap)?;
             serializer.close_term()?;
         }
         Ok(())
