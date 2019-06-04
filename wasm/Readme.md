@@ -26,6 +26,7 @@ Most tantivy features apart from "mmap", "no\_fail" and "regex\_query". If/when 
 
 Make an index of documents on the server using tantivy-cli. 
 Serialise the index directory to a file with name `index.bin`. 
+Place the `index.bin` at the root of this `wasm` directory.
 Compile and pack the wasm library. 
 
 Serve the following to a wasm-compatible browser (most modern browsers):

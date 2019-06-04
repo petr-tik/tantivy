@@ -1,0 +1,15 @@
+
+#+TODO: TODO DONE
+
+** Make the wasm library easy to compile and integrate
+*** Add functions for
+    - [ ] reading the index file
+    - [ ] parsing queries
+    - [ ] performing searches
+    - [ ] collecting and presenting results as JsValues
+*** Enable integrations
+Use wasm-pack to build tantivy-wasm. Ship the repo with a JS/HTML component that makes
+it easy to integrate tantivy wasm to web applications (backend and frontend).
+*** Add tests and CI
+https://rustwasm.github.io/wasm-bindgen/wasm-bindgen-test/index.html
+

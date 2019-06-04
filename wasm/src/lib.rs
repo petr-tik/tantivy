@@ -11,6 +11,7 @@ use wasm_bindgen::prelude::*;
 
 static DATA: &'static [u8] = include_bytes!("../index.bin");
 
+
 /// Given an byte-array build and return a tantivy index
 ///
 /// Byte-array will be received by the browser from the server,
@@ -29,10 +30,9 @@ pub fn query(query: &str) -> Vec<JsValue> {
     let index = instantiate_index(DATA).unwrap();
     let searcher = index.searcher();
     let schema = index.schema();
-    let command = schema.get_field("command").unwrap();
-    let text = schema.get_field("text").unwrap();
+    let fields = schema.fields();
 
-    let query_parser = QueryParser::for_index(&index, vec![command, text]);
+    let query_parser = QueryParser::for_index(&index, fields);
     let query = query_parser.parse_query(query).unwrap();
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(10)).unwrap();
@@ -44,5 +44,3 @@ pub fn query(query: &str) -> Vec<JsValue> {
     docs
 }
 
-#[cfg(test)]
-mod tests {}
