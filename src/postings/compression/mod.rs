@@ -252,6 +252,36 @@ pub mod tests {
     }
 
     #[test]
+    fn test_encode_delta_zero() {
+        use std::mem;
+        let mut encoder = BlockEncoder::new();
+        for val in 1u8..127u8 {
+            // create vector of equal values, where delta is always 0
+            // eg. vec![5, 5, 5, 5, ...]
+            // should be encoded as 1-byte value
+            // 0b0_0000_101
+            // the first bit as zero means there are no blocks later
+            // the low seven bits is the value in binary.
+            // Only values between 0..127 are supported as u8max - 1
+            let vals_to_encode: Vec<u32> = vec![val.into(); 128];
+            let (_num_bits, block_compressed_data) = encoder.compress_block_sorted(&vals_to_encode, 0);
+            let _size_of_block_compressed = mem::size_of_val(block_compressed_data);
+            // uncomment the line below to close issue/167
+            // assert_eq!(block_compressed_data.len(), 1); // 1 byte
+
+            let top_bit = block_compressed_data[0] & 0b1_0000000;
+            let low_seven_bits = block_compressed_data[0] & 0b0_1111111;
+
+            // top bit of block_compressed should be 0,
+            // as there are no more blocks
+            assert_eq!(top_bit, 0);
+            // low seven bits hold the value
+            assert_eq!(val, low_seven_bits as u8);
+        }
+
+    }
+
+    #[test]
     fn test_encode_vint() {
         {
             let expected_length = 154;
