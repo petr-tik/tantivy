@@ -450,6 +450,21 @@ mod tests {
         use std::path::PathBuf;
         use tempdir::TempDir;
 
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn test_index_open_in_dir_on_mac() {
+            // see
+            // https://github.com/tantivy-search/tantivy/issues/562
+            let schema = throw_away_schema();
+            let field = schema.get_field("num_likes").unwrap();
+            let tempdir = TempDir::new("index").unwrap();
+            let tempdir_path = PathBuf::from(tempdir.path());
+            dbg!(tempdir_path);
+            let write_index = Index::create_in_dir(&tempdir_path, schema).unwrap();
+            let read_index = Index::open_in_dir(&tempdir_path).unwrap();
+
+        }
+
         #[test]
         fn test_index_on_commit_reload_policy_mmap() {
             let schema = throw_away_schema();
