@@ -43,7 +43,7 @@ impl BlockEncoder {
     }
 }
 
-/// We ensure that the OutputBuffer is align on 128 bits
+/// We ensure that the OutputBuffer is aligned on 128 bits
 /// in order to run SSE2 linear search on it.
 #[repr(align(128))]
 pub(crate) struct AlignedBuffer(pub [u32; COMPRESSION_BLOCK_SIZE]);
@@ -102,7 +102,7 @@ impl BlockDecoder {
 
 pub trait VIntEncoder {
     /// Compresses an array of `u32` integers,
-    /// using [delta-encoding](https://en.wikipedia.org/wiki/Delta_ encoding)
+    /// using [delta-encoding](https://en.wikipedia.org/wiki/Delta_encoding)
     /// and variable bytes encoding.
     ///
     /// The method takes an array of ints to compress, and returns
@@ -255,6 +255,7 @@ pub mod tests {
     fn test_encode_delta_zero() {
         use std::mem;
         let mut encoder = BlockEncoder::new();
+        let mut decoder = BlockDecoder::new();
         for val in 1u8..127u8 {
             // create vector of equal values, where delta is always 0
             // eg. vec![5, 5, 5, 5, ...]
@@ -264,7 +265,8 @@ pub mod tests {
             // the low seven bits is the value in binary.
             // Only values between 0..127 are supported as u8max - 1
             let vals_to_encode: Vec<u32> = vec![val.into(); 128];
-            let (_num_bits, block_compressed_data) = encoder.compress_block_sorted(&vals_to_encode, 0);
+            let (num_bits, block_compressed_data) =
+                encoder.compress_block_sorted(&vals_to_encode, 0);
             let _size_of_block_compressed = mem::size_of_val(block_compressed_data);
             // uncomment the line below to close issue/167
             // assert_eq!(block_compressed_data.len(), 1); // 1 byte
@@ -277,8 +279,14 @@ pub mod tests {
             assert_eq!(top_bit, 0);
             // low seven bits hold the value
             assert_eq!(val, low_seven_bits as u8);
-        }
 
+            let consumed_num_bytes =
+                decoder.uncompress_block_sorted(block_compressed_data, 0, num_bits);
+            assert_eq!(consumed_num_bytes, block_compressed_data.len());
+
+            // vals = decompress(compress(vals))
+            assert_eq!(vals_to_encode, decoder.output_array());
+        }
     }
 
     #[test]
