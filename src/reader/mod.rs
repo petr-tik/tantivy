@@ -26,6 +26,10 @@ pub enum ReloadPolicy {
     /// The index is reloaded within milliseconds after a new commit is available.
     /// This is made possible by watching changes in the `meta.json` file.
     OnCommit, // TODO add NEAR_REAL_TIME(target_ms)
+    /// Disables reloading the index
+    /// Useful for building applications that
+    /// can only answer queries on pre-built indexes.
+    Never,
 }
 
 /// `IndexReader` builder
@@ -71,8 +75,9 @@ impl IndexReaderBuilder {
         let inner_reader_arc = Arc::new(inner_reader);
         let watch_handle_opt: Option<WatchHandle>;
         match self.reload_policy {
-            ReloadPolicy::Manual => {
-                // No need to set anything...
+            ReloadPolicy::Manual | ReloadPolicy::Never => {
+                // Reloading manually or never means
+                // we don't need to worry about a watch handle
                 watch_handle_opt = None;
             }
             ReloadPolicy::OnCommit => {

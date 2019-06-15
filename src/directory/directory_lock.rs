@@ -29,7 +29,7 @@ pub struct Lock {
 }
 
 lazy_static! {
-     /// Only one process should be able to write tantivy's index at a time.
+    /// Only one process should be able to write tantivy's index at a time.
     /// This lock file, when present, is in charge of preventing other processes to open an IndexWriter.
     ///
     /// If the process is killed and this file remains, it is safe to remove it manually.

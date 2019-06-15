@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 /// Retry the logic of acquiring locks is pretty simple.
-/// We just retry `n` times after a given `duratio`, both
+/// We just retry `n` times after a given `Duration`, both
 /// depending on the type of lock.
 struct RetryPolicy {
     num_retries: usize,
