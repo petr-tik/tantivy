@@ -247,8 +247,9 @@ impl ManagedDirectory {
 impl Directory for ManagedDirectory {
     fn open_read(&self, path: &Path) -> result::Result<ReadOnlySource, OpenReadError> {
         let read_only_source = self.directory.open_read(path)?;
-        let (_footer, reader) = Footer::extract_footer(read_only_source)
+        let (footer, reader) = Footer::extract_footer(read_only_source)
             .map_err(|err| IOError::with_path(path.to_path_buf(), err))?;
+        // footer.is_compatible()?;
         Ok(reader)
     }
 

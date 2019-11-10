@@ -1,5 +1,6 @@
 use crate::directory::read_only_source::ReadOnlySource;
 use crate::directory::{AntiCallToken, TerminatingWrite};
+use crate::{version, Error};
 use byteorder::{ByteOrder, LittleEndian};
 use crc32fast::Hasher;
 use std::io;
@@ -53,7 +54,7 @@ impl Footer {
         res
     }
 
-    pub fn from_bytes(data: &[u8]) -> Result<Self, io::Error> {
+    fn from_bytes(data: &[u8]) -> Result<Self, io::Error> {
         let len = data.len();
         if len < COMMON_FOOTER_SIZE + 4 {
             // 4 bytes for index version, stored in versioned footer
@@ -99,6 +100,27 @@ impl Footer {
 
     pub fn size(&self) -> usize {
         self.versioned_footer.size() as usize + self.meta.len() + COMMON_FOOTER_SIZE
+    }
+
+    /// Compares the version found in the footer with the version of tantivy running
+    /// Indexes are incompatible when the major and minor versions of
+    /// library and serialised index are different
+    /// Has to be called after `extract_footer` to make sure it's not accessing uninitialised memory
+    pub fn is_compatible(&self) -> Result<bool, Error> {
+        use std::str::FromStr;
+        let mut lib_version: Vec<u32> = vec![];
+        for v in version().split('.') {
+            // TODO convert u32::from_str error to tantivy error and replace with try
+            lib_version.push(u32::from_str(v).unwrap());
+        }
+        if self.tantivy_version.0 != lib_version[0] && self.tantivy_version.1 != lib_version[1] {
+            return Err(Error::IncompatibleIndex(format!(
+                "Currently running version: {:?}; index built with: {:?}",
+                lib_version, self.tantivy_version
+            )));
+        }
+
+        Ok(true)
     }
 }
 
@@ -266,7 +288,15 @@ mod tests {
             size: v_footer_bytes.len() as u32,
         };
         assert_eq!(versioned_footer, expected_versioned_footer);
-
         versioned_footer.to_bytes();
+    }
+
+    #[test]
+    fn index_compatibility() {
+        // TODO come up with a byte-array that gives a valid but incompatible index version
+        // let ro_source =
+        // let footer = Footer::extract_footer();
+
+        // assert!(!footer.is_compatible());
     }
 }
