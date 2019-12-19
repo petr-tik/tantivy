@@ -17,6 +17,8 @@ fn cached_tf_component(fieldnorm: u32, average_fieldnorm: f32) -> f32 {
 }
 
 fn compute_tf_cache(average_fieldnorm: f32) -> [f32; 256] {
+    // Compressed cache associated by fieldnorm
+    // 
     let mut cache = [0f32; 256];
     for (fieldnorm_id, cache_mut) in cache.iter_mut().enumerate() {
         let fieldnorm = FieldNormReader::id_to_fieldnorm(fieldnorm_id as u8);
@@ -92,6 +94,7 @@ impl BM25Weight {
     pub fn score(&self, fieldnorm_id: u8, term_freq: u32) -> Score {
         let norm = self.cache[fieldnorm_id as usize];
         let term_freq = term_freq as f32;
+        // TODO547 (self.weight - boost THAT)
         self.weight * term_freq / (term_freq + norm)
     }
 

@@ -19,6 +19,7 @@ pub struct TermWeight {
 
 impl Weight for TermWeight {
     fn scorer(&self, reader: &SegmentReader) -> Result<Box<dyn Scorer>> {
+        // TODO547 pass the boost arg
         let term_scorer = self.scorer_specialized(reader)?;
         Ok(Box::new(term_scorer))
     }
@@ -58,10 +59,16 @@ impl TermWeight {
         }
     }
 
+    // TODO547
+    // fn boost_by(self, factor: f32) -> {
+    //     BM25Weight { weight * factor .. } 
+    // } 
+
     fn scorer_specialized(&self, reader: &SegmentReader) -> Result<TermScorer> {
         let field = self.term.field();
         let inverted_index = reader.inverted_index(field);
         let fieldnorm_reader = reader.get_fieldnorms_reader(field);
+        // TODO547 similarity_weight.clone().boost_by(factor: f32)
         let similarity_weight = self.similarity_weight.clone();
         let postings_opt: Option<SegmentPostings> =
             inverted_index.read_postings(&self.term, self.index_record_option);

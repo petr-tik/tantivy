@@ -64,8 +64,10 @@ impl DocSet for TermScorer {
 
 impl Scorer for TermScorer {
     fn score(&mut self) -> Score {
+        // 
         let fieldnorm_id = self.fieldnorm_id();
         let term_freq = self.term_freq();
+        // BM25 with fieldnorm and term frequency
         self.similarity_weight.score(fieldnorm_id, term_freq)
     }
 }

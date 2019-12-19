@@ -10,6 +10,7 @@ use crate::{DocId, Result};
 pub trait Weight: Send + Sync + 'static {
     /// Returns the scorer for the given segment.
     /// See [`Query`](./trait.Query.html).
+    // TODO547, extra argument ,boost: f32)
     fn scorer(&self, reader: &SegmentReader) -> Result<Box<dyn Scorer>>;
 
     /// Returns an `Explanation` for the given document.

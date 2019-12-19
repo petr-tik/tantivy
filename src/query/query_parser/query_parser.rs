@@ -229,6 +229,7 @@ impl QueryParser {
             .ok_or_else(|| QueryParserError::FieldDoesNotExist(String::from(field_name)))
     }
 
+    // TODO - apply the boost factor HERE to the LogicalAST.
     fn compute_logical_ast(
         &self,
         user_input_ast: UserInputAST,
